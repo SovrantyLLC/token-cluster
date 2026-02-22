@@ -11,6 +11,7 @@ import {
   GraphLink,
   TransferTx,
   ScanResult,
+  WalletHistory,
 } from '@/lib/types';
 import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { analyzeHoldings } from '@/lib/holdings-analyzer';
@@ -54,6 +55,10 @@ function buildGraph(
         netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
+        peakBalance: null,
+        peakDate: null,
+        isGhost: false,
+        disposition: null,
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -76,6 +81,10 @@ function buildGraph(
         netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
+        peakBalance: null,
+        peakDate: null,
+        isGhost: false,
+        disposition: null,
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -237,10 +246,31 @@ async function runDeepScan(body: DeepScanBody) {
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);
 
+    // Attach wallet history data to nodes
+    attachHistoryToNodes(expandedScanResult.nodes, finalReport.walletHistories);
+
     return { scanResult: expandedScanResult, holdingsReport: finalReport };
   }
 
+  // Attach wallet history data to nodes
+  attachHistoryToNodes(scanResult.nodes, holdingsReport.walletHistories);
+
   return { scanResult, holdingsReport };
+}
+
+function attachHistoryToNodes(nodes: GraphNode[], histories: WalletHistory[]) {
+  const historyMap = new Map<string, WalletHistory>();
+  for (const h of histories) historyMap.set(h.address.toLowerCase(), h);
+
+  for (const node of nodes) {
+    const history = historyMap.get(node.id);
+    if (history) {
+      node.peakBalance = history.peakBalance;
+      node.peakDate = history.peakDate;
+      node.isGhost = history.isGhost;
+      node.disposition = history.disposition;
+    }
+  }
 }
 
 export async function POST(req: NextRequest) {

@@ -30,6 +30,10 @@ export interface GraphNode {
   netPosition: number | null;
   firstSeen: number;
   lastSeen: number;
+  peakBalance: number | null;
+  peakDate: number | null;
+  isGhost: boolean;
+  disposition: DispositionBreakdown | null;
 }
 
 export interface GraphLink {
@@ -72,6 +76,35 @@ export interface OutboundSummary {
   topRecipients: { address: string; amount: number; stillHolding: number }[];
 }
 
+export interface DispositionBreakdown {
+  soldOnDex: { amount: number; percentage: number; txCount: number; dexes: string[] };
+  sentToWallets: { amount: number; percentage: number; recipients: RecipientDisposition[] };
+  sentToContracts: { amount: number; percentage: number };
+  burnedOrLost: { amount: number; percentage: number };
+}
+
+export interface RecipientDisposition {
+  address: string;
+  amountReceived: number;
+  currentBalance: number;
+  soldFromHere: number;
+  passedAlong: number;
+  stillHolding: number;
+  status: 'holding' | 'sold' | 'passed-along' | 'mixed';
+}
+
+export interface WalletHistory {
+  address: string;
+  currentBalance: number;
+  peakBalance: number;
+  peakDate: number;
+  totalReceived: number;
+  totalSent: number;
+  netDisposed: number;
+  disposition: DispositionBreakdown;
+  isGhost: boolean;
+}
+
 export interface HoldingsReport {
   targetWallet: string;
   targetBalance: number;
@@ -81,4 +114,6 @@ export interface HoldingsReport {
   clusterSummary: string;
   riskFlags: string[];
   outboundSummary: OutboundSummary;
+  walletHistories: WalletHistory[];
+  ghostWallets: WalletHistory[];
 }

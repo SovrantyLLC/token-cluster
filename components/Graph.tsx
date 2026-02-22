@@ -118,6 +118,10 @@ function assignLayers(
         netPosition: w.netFlowFromTarget,
         firstSeen: w.firstInteraction,
         lastSeen: w.lastInteraction,
+        peakBalance: null,
+        peakDate: null,
+        isGhost: false,
+        disposition: null,
       });
       existingIds.add(addr);
     }
@@ -493,14 +497,28 @@ export default function Graph({
       .attr('fill', (d) => {
         // Hollow target node when balance is 0
         if (d.layer === 0 && (d.balance === null || d.balance === 0)) return 'transparent';
+        // Ghost nodes are hollow
+        if (d.isGhost) return 'transparent';
         return nodeColor(d);
       })
       .attr('opacity', (d) => (d.layer === 4 ? 0.4 : 1))
       .attr('stroke', (d) => {
         if (d.layer === 0) return d.balance === null || d.balance === 0 ? '#e8813a' : '#ffffff';
+        // Ghost nodes: red if sold on DEX, gold if pass-through to holder
+        if (d.isGhost) {
+          const disp = d.disposition;
+          if (disp && disp.soldOnDex.percentage > 50) return 'rgba(232,65,66,0.5)';
+          if (disp && disp.sentToWallets.percentage > 50) return 'rgba(201,162,39,0.5)';
+          return 'rgba(156,163,175,0.4)';
+        }
         return 'none';
       })
-      .attr('stroke-width', (d) => (d.layer === 0 ? 2.5 : 0))
+      .attr('stroke-width', (d) => {
+        if (d.layer === 0) return 2.5;
+        if (d.isGhost) return 2;
+        return 0;
+      })
+      .attr('stroke-dasharray', (d) => (d.isGhost ? '4 3' : ''))
       .attr('filter', (d) => {
         if (d.layer === 0) return 'url(#glow)';
         if (d.layer === 1) return 'url(#pulse-glow)';
@@ -588,6 +606,27 @@ export default function Graph({
             }
             html += `</div>`;
           }
+        }
+
+        // Ghost wallet info
+        if (d.isGhost && d.peakBalance !== null && d.peakBalance > 0) {
+          html += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1a1e2e">`;
+          html += `<div style="color:#e84142;font-weight:bold">GHOST WALLET</div>`;
+          html += `<div>Peak: <span style="color:#fff">${fmtBal(d.peakBalance)} ${tokenSymbol}</span>`;
+          if (d.peakDate) html += ` <span style="color:#6b7280">(${fmtDate(d.peakDate)})</span>`;
+          html += `</div>`;
+          if (d.disposition) {
+            const disp = d.disposition;
+            if (disp.soldOnDex.amount > 0) {
+              html += `<div>Sold on DEX: <span style="color:#e84142">${fmtBal(disp.soldOnDex.amount)}</span> (${disp.soldOnDex.percentage.toFixed(0)}%)`;
+              if (disp.soldOnDex.dexes.length > 0) html += ` via ${disp.soldOnDex.dexes[0]}`;
+              html += `</div>`;
+            }
+            if (disp.sentToWallets.amount > 0) {
+              html += `<div>Sent to wallets: <span style="color:#c9a227">${fmtBal(disp.sentToWallets.amount)}</span> (${disp.sentToWallets.percentage.toFixed(0)}%)</div>`;
+            }
+          }
+          html += `</div>`;
         }
 
         html += `<div style="color:#6b7280;margin-top:2px">${fmtDate(d.firstSeen)} \u2192 ${fmtDate(d.lastSeen)}</div>`;
@@ -877,6 +916,10 @@ export default function Graph({
             <div className="border-t border-raised/50 mt-1 pt-1 flex items-center gap-2" title="Gold glowing ring around a node means HIGH confidence same-owner wallet">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: COL.goldRing, background: 'transparent' }} />
               <span className="text-gray-400">Gold ring = HIGH</span>
+            </div>
+            <div className="flex items-center gap-2" title="Hollow dashed circle = Ghost wallet (once held tokens, now empty)">
+              <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-dashed" style={{ borderColor: 'rgba(232,65,66,0.5)', background: 'transparent' }} />
+              <span className="text-gray-400">Ghost (emptied)</span>
             </div>
           </div>
         </>

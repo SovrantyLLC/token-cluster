@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { HoldingsReport, HiddenHoldingWallet, ScanResult } from '@/lib/types';
+import { HoldingsReport, HiddenHoldingWallet, ScanResult, WalletHistory } from '@/lib/types';
 
 interface HoldingsPanelProps {
   report: HoldingsReport;
@@ -73,6 +73,34 @@ function SnowscanIcon({ address }: { address: string }) {
   );
 }
 
+/* ── Disposition Bar ── */
+function DispositionBar({ ghost }: { ghost: WalletHistory }) {
+  const d = ghost.disposition;
+  const total = d.soldOnDex.amount + d.sentToWallets.amount + d.sentToContracts.amount + d.burnedOrLost.amount;
+  if (total === 0) return null;
+
+  const segments = [
+    { pct: d.soldOnDex.percentage, color: '#e84142', label: 'DEX' },
+    { pct: d.sentToWallets.percentage, color: '#4ea8de', label: 'Wallets' },
+    { pct: d.sentToContracts.percentage, color: '#a87cdb', label: 'Contracts' },
+    { pct: d.burnedOrLost.percentage, color: '#6b7280', label: 'Burned' },
+  ].filter((s) => s.pct > 0);
+
+  return (
+    <div className="flex items-center gap-1 w-full">
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden flex" style={{ background: '#1a1e2e' }}>
+        {segments.map((s, i) => (
+          <div
+            key={i}
+            style={{ width: `${s.pct}%`, background: s.color }}
+            title={`${s.label}: ${s.pct.toFixed(1)}%`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── Export Report ── */
 function generateMarkdownReport(
   report: HoldingsReport,
@@ -116,6 +144,30 @@ function generateMarkdownReport(
     lines.push('');
   }
 
+  // Ghost wallets
+  if (report.ghostWallets.length > 0) {
+    lines.push(`## Ghost Wallets (Previously Held)`);
+    lines.push(`*${report.ghostWallets.length} wallet(s) that once held tokens but are now empty.*`);
+    lines.push('');
+    for (const g of report.ghostWallets) {
+      const d = g.disposition;
+      lines.push(`### \`${g.address}\``);
+      lines.push(`- Peak: **${fmt(g.peakBalance)} ${tokenSymbol}** (${fmtDate(g.peakDate)})`);
+      lines.push(`- Total received: ${fmt(g.totalReceived)}, Total sent: ${fmt(g.totalSent)}`);
+      if (d.soldOnDex.amount > 0) {
+        lines.push(`- Sold on DEX: **${fmt(d.soldOnDex.amount)}** (${d.soldOnDex.percentage.toFixed(1)}%) via ${d.soldOnDex.dexes.join(', ') || 'DEX'}`);
+      }
+      if (d.sentToWallets.amount > 0) {
+        lines.push(`- Sent to wallets: **${fmt(d.sentToWallets.amount)}** (${d.sentToWallets.percentage.toFixed(1)}%)`);
+        for (const r of d.sentToWallets.recipients.slice(0, 5)) {
+          const statusLabel = r.status === 'holding' ? 'HOLDING' : r.status === 'sold' ? 'SOLD' : r.status === 'passed-along' ? 'PASSED' : 'MIXED';
+          lines.push(`  - \`${r.address}\` received ${fmt(r.amountReceived)}, holds ${fmt(r.stillHolding)} [${statusLabel}]`);
+        }
+      }
+      lines.push('');
+    }
+  }
+
   // Cluster wallets
   lines.push(`## Cluster Wallets`);
   for (const w of report.wallets) {
@@ -136,7 +188,7 @@ function generateMarkdownReport(
     lines.push('');
   }
 
-  // Timeline (top 20 transfers by volume)
+  // Top transfers
   if (scanResult && scanResult.transfers.length > 0) {
     const decimals = parseInt(scanResult.transfers[0].tokenDecimal, 10) || 18;
     const target = report.targetWallet.toLowerCase();
@@ -182,6 +234,7 @@ export default function HoldingsPanel({
     clusterSummary,
     riskFlags,
     outboundSummary,
+    ghostWallets,
   } = report;
 
   const highWallets = wallets.filter((w) => w.confidence === 'high');
@@ -190,6 +243,15 @@ export default function HoldingsPanel({
   const suspectedHoldings = medWallets.reduce((s, w) => s + w.balance, 0);
   const totalEstimate = targetBalance + totalHeldByCluster;
   const totalWalletCount = wallets.filter((w) => w.confidence === 'high' || w.confidence === 'medium').length + 1;
+  const combinedGhostPeak = ghostWallets.reduce((s, g) => s + g.peakBalance, 0);
+
+  // Detect pass-through ghosts
+  const passThroughGhosts = ghostWallets.filter((g) => {
+    const recips = g.disposition.sentToWallets.recipients;
+    if (recips.length === 0) return false;
+    const top = recips[0];
+    return top.amountReceived / (g.disposition.sentToWallets.amount || 1) > 0.7 && top.currentBalance > 0;
+  });
 
   const handleExport = useCallback(() => {
     const md = generateMarkdownReport(report, tokenSymbol, scanResult);
@@ -268,7 +330,7 @@ export default function HoldingsPanel({
       {/* ── Cluster Wallets ── */}
       {wallets.length > 0 && (
         <div className="px-4 pb-3">
-          <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2" title="Wallets scored by 7 heuristics including token origin analysis">
+          <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2" title="Wallets scored by 9 heuristics including token origin, pass-through, and sell-off analysis">
             Cluster Wallets
           </div>
           <div
@@ -285,7 +347,6 @@ export default function HoldingsPanel({
                     w.confidence
                   )} hover:bg-raised/40 transition-colors text-left cursor-pointer border-b border-raised/20 last:border-b-0`}
                 >
-                  {/* Confidence badge */}
                   <span
                     className="text-[9px] font-mono font-bold w-8 flex-shrink-0"
                     style={{ color: confidenceColor(w.confidence) }}
@@ -293,13 +354,9 @@ export default function HoldingsPanel({
                   >
                     {confidenceLabel(w.confidence)}
                   </span>
-
-                  {/* Address */}
                   <span className="text-[11px] font-mono text-gray-400 flex-shrink-0">
                     {abbr(w.address)}
                   </span>
-
-                  {/* Balance */}
                   <span
                     className={`text-[11px] font-mono flex-shrink-0 px-1.5 py-0.5 rounded ${
                       w.balance > 0
@@ -309,24 +366,135 @@ export default function HoldingsPanel({
                   >
                     {fmt(w.balance)} {tokenSymbol}
                   </span>
-
-                  {/* Token origin badge */}
                   {ob.text && (
                     <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${ob.cls}`}>
                       {ob.text}
                     </span>
                   )}
-
-                  {/* Reasons (truncated) */}
                   <span className="flex-1 min-w-0 text-[10px] text-gray-600 font-mono truncate" title={`${w.reasons.join('\n')}\n\nOrigin: ${w.tokenOriginDetails}`}>
                     {w.reasons.slice(0, 2).join(', ')}
                   </span>
-
-                  {/* Snowscan link */}
                   <SnowscanIcon address={w.address} />
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Ghost Wallets ── */}
+      {ghostWallets.length > 0 && (
+        <div className="px-4 pb-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider" title="Wallets that once held tokens but are now empty — shows where tokens went">
+              Ghost Wallets — Previously Held
+            </div>
+            <span className="text-[9px] font-mono text-gray-600">
+              Peak: {fmt(combinedGhostPeak)} {tokenSymbol}
+            </span>
+          </div>
+
+          <div
+            className="rounded-md border border-raised/50 overflow-hidden"
+            style={{ background: '#0a0c14' }}
+          >
+            {ghostWallets
+              .sort((a, b) => b.peakBalance - a.peakBalance)
+              .slice(0, 15)
+              .map((ghost) => {
+                const d = ghost.disposition;
+                const isPassThrough = passThroughGhosts.includes(ghost);
+                const topRecip = d.sentToWallets.recipients[0];
+
+                return (
+                  <div
+                    key={ghost.address}
+                    className={`px-3 py-2.5 border-b border-raised/20 last:border-b-0 ${
+                      isPassThrough ? 'border-l-[3px] border-l-[#c9a227]' : 'border-l-[3px] border-l-red-500/40'
+                    }`}
+                  >
+                    {/* Row 1: Address + Peak */}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] font-mono font-bold text-red-400/70 w-10 flex-shrink-0">
+                        GHOST
+                      </span>
+                      <span className="text-[11px] font-mono text-gray-400 flex-shrink-0">
+                        {abbr(ghost.address)}
+                      </span>
+                      <span className="text-[11px] font-mono text-gray-200 font-bold flex-shrink-0">
+                        {fmt(ghost.peakBalance)} {tokenSymbol}
+                      </span>
+                      <span className="text-[9px] font-mono text-gray-600 flex-shrink-0">
+                        peak {fmtDate(ghost.peakDate)}
+                      </span>
+                      {isPassThrough && (
+                        <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded text-[#c9a227] bg-[#c9a227]/10 flex-shrink-0">
+                          PASS-THROUGH
+                        </span>
+                      )}
+                      <span className="ml-auto flex-shrink-0">
+                        <SnowscanIcon address={ghost.address} />
+                      </span>
+                    </div>
+
+                    {/* Row 2: Disposition bar */}
+                    <DispositionBar ghost={ghost} />
+
+                    {/* Row 3: Where it went */}
+                    <div className="flex items-center gap-3 mt-1 text-[10px] font-mono">
+                      {d.soldOnDex.amount > 0 && (
+                        <span className="text-red-400/80">
+                          {d.soldOnDex.percentage.toFixed(0)}% sold{d.soldOnDex.dexes.length > 0 ? ` on ${d.soldOnDex.dexes[0]}` : ''}
+                        </span>
+                      )}
+                      {d.sentToWallets.amount > 0 && (
+                        <span className="text-[#4ea8de]/80">
+                          {d.sentToWallets.percentage.toFixed(0)}% to wallets
+                        </span>
+                      )}
+                      {d.sentToContracts.amount > 0 && (
+                        <span className="text-[#a87cdb]/80">
+                          {d.sentToContracts.percentage.toFixed(0)}% to contracts
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 4: Top recipient if pass-through */}
+                    {isPassThrough && topRecip && (
+                      <div className="mt-1 text-[10px] font-mono text-[#c9a227]/80 flex items-center gap-1">
+                        <span className="text-gray-600">{'\u2192'}</span>
+                        Moved to {abbr(topRecip.address)} which still holds{' '}
+                        <span className="text-emerald-400">{fmt(topRecip.stillHolding)} {tokenSymbol}</span>
+                      </div>
+                    )}
+
+                    {/* Row 4b: Recipients who sold */}
+                    {!isPassThrough && d.sentToWallets.recipients.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {d.sentToWallets.recipients.slice(0, 3).map((r) => (
+                          <div key={r.address} className="text-[10px] font-mono flex items-center gap-1">
+                            <span className="text-gray-600">{'\u2192'}</span>
+                            <span className="text-gray-500">{abbr(r.address)}</span>
+                            <span className="text-gray-500">recv {fmt(r.amountReceived)}</span>
+                            {r.status === 'holding' && (
+                              <span className="text-emerald-400">holds {fmt(r.stillHolding)}</span>
+                            )}
+                            {r.status === 'sold' && (
+                              <span className="text-red-400/70">sold {fmt(r.soldFromHere)}</span>
+                            )}
+                            {r.status === 'passed-along' && (
+                              <span className="text-[#4ea8de]/70">passed {fmt(r.passedAlong)}</span>
+                            )}
+                            {r.status === 'mixed' && (
+                              <span className="text-gray-500">mixed</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}

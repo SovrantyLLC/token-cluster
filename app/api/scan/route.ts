@@ -45,6 +45,10 @@ function buildGraph(
         netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
+        peakBalance: null,
+        peakDate: null,
+        isGhost: false,
+        disposition: null,
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -68,6 +72,10 @@ function buildGraph(
         netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
+        peakBalance: null,
+        peakDate: null,
+        isGhost: false,
+        disposition: null,
       });
     }
     const toNode = nodeMap.get(to)!;
