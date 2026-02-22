@@ -226,7 +226,7 @@ export default function Dashboard() {
           onWalletClick={() => {}}
         />
 
-        <main className="flex-1 flex flex-col min-w-0" style={{ background: '#06070b' }}>
+        <main className="flex-1 flex flex-col min-w-0 relative" style={{ background: '#06070b' }}>
           {/* Graph: takes remaining space (60% when holdings open, 100% when closed) */}
           <div
             className="p-2 min-h-0 transition-all duration-300"
@@ -296,17 +296,20 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Analysis overlay — absolutely positioned so it doesn't compete with flex layout */}
           {showAnalysis && scanResult && (
-            <AnalysisPanel
-              isOpen={showAnalysis}
-              nodes={scanResult.nodes}
-              links={scanResult.links}
-              transfers={scanResult.transfers}
-              targetWallet={targetWallet}
-              tokenSymbol={currentToken.symbol}
-              holdingsReport={holdingsReport}
-              onClose={() => setShowAnalysis(false)}
-            />
+            <div className="absolute bottom-0 left-0 right-0 z-20">
+              <AnalysisPanel
+                isOpen={showAnalysis}
+                nodes={scanResult.nodes}
+                links={scanResult.links}
+                transfers={scanResult.transfers}
+                targetWallet={targetWallet}
+                tokenSymbol={currentToken.symbol}
+                holdingsReport={holdingsReport}
+                onClose={() => setShowAnalysis(false)}
+              />
+            </div>
           )}
         </main>
       </div>
