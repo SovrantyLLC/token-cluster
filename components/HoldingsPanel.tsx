@@ -81,6 +81,7 @@ export default function HoldingsPanel({
               value={fmt(targetBalance)}
               sub={tokenSymbol}
               accent={false}
+              hint="Current token balance held directly in the target wallet"
             />
             <StatCard
               label="CONFIRMED"
@@ -88,19 +89,21 @@ export default function HoldingsPanel({
               sub={`${tokenSymbol} (${highWallets.length} wlt${highWallets.length !== 1 ? 's' : ''})`}
               accent={false}
               highlight
+              hint="Additional tokens held in HIGH confidence wallets — likely owned by the same person based on shared funding, bidirectional transfers, timing patterns, etc."
             />
             <StatCard
               label="TOTAL ESTIMATED"
               value={fmt(totalEstimate)}
               sub={`${tokenSymbol} across ${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}`}
               accent
+              hint="Target balance + all HIGH and MEDIUM confidence wallet balances combined — this person's likely total position"
             />
           </div>
 
           {/* ── Cluster Wallets ── */}
           {wallets.length > 0 && (
             <div className="px-4 pb-3">
-              <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2">
+              <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2" title="Wallets scored by 6 heuristics: bidirectional transfers, shared gas funding source, rapid transfer timing, sequential sends, received-then-held pattern, and isolated activity">
                 Cluster Wallets
               </div>
               <div
@@ -119,6 +122,7 @@ export default function HoldingsPanel({
                     <span
                       className="text-[9px] font-mono font-bold w-8 flex-shrink-0"
                       style={{ color: confidenceColor(w.confidence) }}
+                      title={w.confidence === 'high' ? 'Score 60+: Very likely same owner' : w.confidence === 'medium' ? 'Score 35-59: Possibly same owner' : 'Score 15-34: Weak signals'}
                     >
                       {confidenceLabel(w.confidence)}
                     </span>
@@ -140,7 +144,7 @@ export default function HoldingsPanel({
                     </span>
 
                     {/* Reasons (truncated) */}
-                    <span className="flex-1 min-w-0 text-[10px] text-gray-600 font-mono truncate">
+                    <span className="flex-1 min-w-0 text-[10px] text-gray-600 font-mono truncate" title={w.reasons.join('\n')}>
                       {w.reasons.slice(0, 2).join(', ')}
                     </span>
 
@@ -155,7 +159,7 @@ export default function HoldingsPanel({
           {/* ── Risk Flags ── */}
           {riskFlags.length > 0 && (
             <div className="px-4 pb-3">
-              <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2">
+              <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mb-2" title="Behavioral patterns detected across the wallet cluster — may indicate wash trading, wallet splitting, cold storage, or recent token dispersal">
                 Flags
               </div>
               <div className="space-y-1">
@@ -197,15 +201,18 @@ function StatCard({
   sub,
   accent,
   highlight,
+  hint,
 }: {
   label: string;
   value: string;
   sub: string;
   accent?: boolean;
   highlight?: boolean;
+  hint?: string;
 }) {
   return (
     <div
+      title={hint}
       className={`rounded-lg border px-3 py-3 ${
         accent
           ? 'border-[#c9a227]/40 bg-[#c9a227]/8'

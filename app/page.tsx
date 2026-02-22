@@ -164,14 +164,15 @@ export default function Dashboard() {
             </div>
           ) : scanResult ? (
             <>
-              <Stat label="Nodes" value={String(filteredNodes.length)} />
-              <Stat label="Edges" value={String(filteredLinks.length)} />
-              <Stat label="Volume" value={fmt(totalVolume)} accent />
+              <Stat label="Nodes" value={String(filteredNodes.length)} hint="Total unique wallets and contracts found in the token's transfer history" />
+              <Stat label="Edges" value={String(filteredLinks.length)} hint="Number of unique transfer paths between wallets" />
+              <Stat label="Volume" value={fmt(totalVolume)} accent hint="Total token volume transferred across all edges" />
               {holdingsReport && (
                 <Stat
                   label="Est. Holdings"
                   value={fmt(holdingsReport.targetBalance + holdingsReport.totalHeldByCluster)}
                   accent
+                  hint="Estimated total tokens held by target + all HIGH/MED confidence wallets likely owned by the same person"
                 />
               )}
             </>
@@ -190,6 +191,7 @@ export default function Dashboard() {
                   ? 'text-[#c9a227] border-[#c9a227]/40 bg-[#c9a227]/10'
                   : 'text-gray-500 border-raised hover:border-gray-500 hover:text-gray-300'
               }`}
+              title="Written cluster analysis report — transfer patterns, wash trading detection, and anomaly summary"
             >
               Analysis
             </button>
@@ -244,6 +246,7 @@ export default function Dashboard() {
               <button
                 onClick={() => setShowHoldings(!showHoldings)}
                 className="flex items-center justify-between px-4 py-2 hover:bg-raised/30 transition-colors cursor-pointer flex-shrink-0"
+                title="Click to expand/collapse the Hidden Holdings Report — shows wallets likely owned by the same person as the target"
               >
                 <div className="flex items-center gap-2">
                   <span
@@ -304,9 +307,9 @@ export default function Dashboard() {
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Stat({ label, value, accent, hint }: { label: string; value: string; accent?: boolean; hint?: string }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5" title={hint}>
       <span className="text-[10px] text-gray-600 font-mono uppercase">{label}</span>
       <span className={`text-xs font-mono font-bold ${accent ? 'text-[#c9a227]' : 'text-gray-300'}`}>
         {value}

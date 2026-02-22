@@ -43,11 +43,11 @@ const RINGS = [
 ];
 
 const LAYER_LABELS = [
-  { layer: 0, label: 'Target', color: COL.target },
-  { layer: 1, label: 'Cluster (HIGH)', color: COL.high },
-  { layer: 2, label: 'Suspects (MED)', color: COL.med },
-  { layer: 3, label: 'Other Wallets', color: COL.wallet },
-  { layer: 4, label: 'Contracts/DEX', color: COL.contract },
+  { layer: 0, label: 'Target', color: COL.target, hint: 'The wallet being analyzed' },
+  { layer: 1, label: 'Cluster (HIGH)', color: COL.high, hint: 'Wallets scored 60+ — very likely owned by the same person (shared funding, bidirectional transfers, timing correlation)' },
+  { layer: 2, label: 'Suspects (MED)', color: COL.med, hint: 'Wallets scored 35-59 — possibly same owner, fewer signals' },
+  { layer: 3, label: 'Other Wallets', color: COL.wallet, hint: 'Regular wallets that transferred this token with the target' },
+  { layer: 4, label: 'Contracts/DEX', color: COL.contract, hint: 'Smart contracts, DEX routers, and LP pools detected via on-chain bytecode' },
 ];
 
 /* ── helpers ─────────────────────────────────── */
@@ -744,6 +744,7 @@ export default function Graph({
                 <button
                   key={item.layer}
                   onClick={() => handleLayerToggle(item.layer)}
+                  title={item.hint}
                   className={`flex items-center gap-2 px-1.5 py-0.5 rounded transition-colors text-left cursor-pointer ${
                     visibleLayers.has(item.layer) ? 'text-gray-200' : 'text-gray-600 hover:text-gray-400'
                   }`}
@@ -860,12 +861,12 @@ export default function Graph({
           {/* ── Legend (bottom-right) ── */}
           <div className="absolute bottom-3 right-3 bg-surface/90 border border-raised/60 rounded px-3 py-2 text-[10px] font-mono z-10 flex flex-col gap-1">
             {LAYER_LABELS.map((item) => (
-              <div key={item.layer} className="flex items-center gap-2">
+              <div key={item.layer} className="flex items-center gap-2" title={item.hint}>
                 <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: item.color }} />
                 <span className="text-gray-400">{item.label}</span>
               </div>
             ))}
-            <div className="border-t border-raised/50 mt-1 pt-1 flex items-center gap-2">
+            <div className="border-t border-raised/50 mt-1 pt-1 flex items-center gap-2" title="Gold glowing ring around a node means HIGH confidence same-owner wallet">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: COL.goldRing, background: 'transparent' }} />
               <span className="text-gray-400">Gold ring = HIGH</span>
             </div>

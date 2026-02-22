@@ -66,11 +66,11 @@ function SkeletonRow() {
 
 /* ── filter pills ──────────────────────────── */
 const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'sent', label: 'Sent' },
-  { key: 'received', label: 'Received' },
-  { key: 'heavy', label: 'Heavy' },
-  { key: 'holders', label: 'Holders' },
+  { key: 'all', label: 'All', hint: 'Show all connected wallets and contracts' },
+  { key: 'sent', label: 'Sent', hint: 'Wallets that sent tokens to the target' },
+  { key: 'received', label: 'Received', hint: 'Wallets that received tokens from the target' },
+  { key: 'heavy', label: 'Heavy', hint: 'Wallets with 5+ transactions involving the target' },
+  { key: 'holders', label: 'Holders', hint: 'Wallets currently holding a token balance > 0' },
 ];
 
 /* ── props interface ───────────────────────── */
@@ -205,6 +205,7 @@ export default function Sidebar({
             onClick={handleScanClick}
             disabled={isScanning || !localWallet}
             className="px-3 py-2 rounded-md font-bold text-xs tracking-wider transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-gold text-void hover:bg-[#a68520] active:scale-[0.97] flex-shrink-0 cursor-pointer"
+            title="Scan this wallet's token transfers, detect contracts, check balances, analyze funding sources, and identify hidden holdings"
           >
             {isScanning ? (
               <span className="flex items-center gap-1.5">
@@ -221,7 +222,7 @@ export default function Sidebar({
         </span>
 
         <div className="flex gap-2 mt-2.5">
-          <div className="flex-1">
+          <div className="flex-1" title="How many hops from the target wallet to scan. 1 hop = direct transfers only. 2 hops = also scans wallets connected to those wallets.">
             <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider block mb-1">
               Depth
             </span>
@@ -235,7 +236,7 @@ export default function Sidebar({
               <option value={2}>2 hops</option>
             </select>
           </div>
-          <div className="flex-1">
+          <div className="flex-1" title="Maximum number of token transfer transactions to fetch from the blockchain explorer API. Higher = more complete but slower.">
             <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider block mb-1">
               Limit
             </span>
@@ -265,6 +266,7 @@ export default function Sidebar({
             <button
               key={f.key}
               onClick={() => onFilterChange(f.key)}
+              title={f.hint}
               className={`px-2.5 py-1 rounded-full text-[11px] font-mono transition-colors border cursor-pointer ${
                 activeFilter === f.key
                   ? 'bg-gold/15 border-gold/40 text-gold'
@@ -286,11 +288,11 @@ export default function Sidebar({
         style={{ flex: '1 1 0%', minHeight: 0 }}
       >
         <div className="flex-shrink-0 px-4 pt-3 pb-2 flex items-center justify-between">
-          <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider">
+          <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider" title="All wallets and contracts that transferred this token to/from the target wallet">
             Connected Wallets ({walletList.length})
           </span>
           {walletList.length > 0 && (
-            <span className="text-[10px] text-gray-600 font-mono">
+            <span className="text-[10px] text-gray-600 font-mono" title="Number of wallets currently holding a non-zero token balance">
               {walletList.filter((n) => n.balance !== null && n.balance > 0).length} holders
             </span>
           )}
@@ -345,6 +347,7 @@ export default function Sidebar({
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
                   style={{ background: dotColour(node) }}
+                  title={node.isContract ? 'Contract/DEX' : node.balance !== null && node.balance > 0 ? 'Token holder' : node.txCount >= 5 ? 'High-frequency trader' : 'Wallet'}
                 />
 
                 {/* address / label */}
@@ -362,12 +365,13 @@ export default function Sidebar({
                       ? 'bg-emerald-400/10'
                       : 'bg-transparent'
                   }`}
+                  title={node.balance !== null ? `Current token balance: ${node.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : 'Balance not yet checked'}
                 >
                   {bal.text}
                 </span>
 
                 {/* tx count */}
-                <span className="text-[10px] font-mono text-gray-600 flex-shrink-0 w-8 text-right">
+                <span className="text-[10px] font-mono text-gray-600 flex-shrink-0 w-8 text-right" title={`${node.txCount} token transfer transactions involving the target wallet`}>
                   {node.txCount}tx
                 </span>
               </button>
