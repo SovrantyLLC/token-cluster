@@ -4,6 +4,7 @@ import {
   fetchTokenTransfers,
   detectContracts,
   getTokenBalanceBatch,
+  fetchFundingSources,
 } from '@/lib/avax';
 import {
   GraphNode,
@@ -11,10 +12,10 @@ import {
   TransferTx,
   ScanResult,
 } from '@/lib/types';
-import { KNOWN_CONTRACTS, ROUTESCAN_API, SNOWSCAN_API } from '@/lib/constants';
+import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { analyzeHoldings } from '@/lib/holdings-analyzer';
 import { rateLimit, getRateLimitHeaders } from '@/lib/rate-limit';
-import { fetchWithTimeout, withOverallTimeout } from '@/lib/fetch-with-timeout';
+import { withOverallTimeout } from '@/lib/fetch-with-timeout';
 
 interface DeepScanBody {
   wallet: string;
@@ -102,60 +103,6 @@ function buildGraph(
   };
 }
 
-async function fetchFundingSources(
-  wallets: string[]
-): Promise<Record<string, string>> {
-  const results: Record<string, string> = {};
-  const BATCH = 10;
-
-  for (let i = 0; i < wallets.length; i += BATCH) {
-    const batch = wallets.slice(i, i + BATCH);
-    const batchResults = await Promise.all(
-      batch.map(async (wallet) => {
-        const addr = wallet.toLowerCase();
-        const apis = [ROUTESCAN_API, SNOWSCAN_API];
-        for (let a = 0; a < apis.length; a++) {
-          try {
-            const params = new URLSearchParams({
-              module: 'account',
-              action: 'txlist',
-              address: addr,
-              sort: 'asc',
-              page: '1',
-              offset: '5',
-            });
-            const res = await fetchWithTimeout(
-              `${apis[a]}?${params}`,
-              { next: { revalidate: 0 } },
-              10_000
-            );
-            if (!res.ok) continue;
-            const json = await res.json();
-            if (json.status !== '1' || !Array.isArray(json.result)) continue;
-            for (const tx of json.result) {
-              if (
-                tx.to?.toLowerCase() === addr &&
-                tx.value &&
-                BigInt(tx.value) > BigInt(0)
-              ) {
-                return { addr, funder: tx.from as string };
-              }
-            }
-          } catch {
-            continue;
-          }
-        }
-        return { addr, funder: null as string | null };
-      })
-    );
-    for (const { addr, funder } of batchResults) {
-      if (funder) results[addr] = funder;
-    }
-  }
-
-  return results;
-}
-
 function deduplicateTransfers(transfers: TransferTx[]): TransferTx[] {
   const seen = new Set<string>();
   return transfers.filter((tx) => {
@@ -210,6 +157,7 @@ async function runDeepScan(body: DeepScanBody) {
     transfers: allTransfers,
     detectedContracts,
     balances,
+    fundingSources,
   };
 
   const holdingsReport = analyzeHoldings(scanResult, wallet, 'TOKEN', fundingSources);
@@ -276,6 +224,7 @@ async function runDeepScan(body: DeepScanBody) {
       transfers: allTransfers,
       detectedContracts: Array.from(contractSet),
       balances,
+      fundingSources,
     };
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);

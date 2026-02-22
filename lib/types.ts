@@ -45,6 +45,7 @@ export interface ScanResult {
   transfers: TransferTx[];
   detectedContracts: string[];
   balances: Record<string, number>;
+  fundingSources?: Record<string, string>;
 }
 
 export interface HiddenHoldingWallet {

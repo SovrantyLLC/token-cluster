@@ -120,8 +120,8 @@ export default function AnalysisPanel({
       }
     }
 
-    const knownRouterCount = contractNodes.filter((n) => !!KNOWN_CONTRACTS[n.id]).length;
-    const autoDetectedCount = detectedContracts.size - knownRouterCount;
+    const knownRouterCount = contractNodes.filter((n) => !!KNOWN_CONTRACTS[n.id.toLowerCase()]).length;
+    const autoDetectedCount = contractNodes.length - knownRouterCount;
 
     // holdings
     const holdersChecked = walletNodes.filter((n) => n.balance !== null);
@@ -139,14 +139,22 @@ export default function AnalysisPanel({
       if (l.source === target) sentPeers.add(l.target);
       if (l.target === target) recvPeers.add(l.source);
     }
+    const bidirSeen = new Set<string>();
     Array.from(sentPeers).forEach((addr) => {
-      if (recvPeers.has(addr)) {
+      if (recvPeers.has(addr) && !bidirSeen.has(addr)) {
+        bidirSeen.add(addr);
         const node = nodes.find((n) => n.id === addr && !n.isContract);
         if (node) bidirectional.push(node);
       }
     });
 
-    const heavyInteractors = walletNodes.filter((n) => n.txCount >= 5 && !n.isTarget);
+    const heavyInteractorsSeen = new Set<string>();
+    const heavyInteractors = walletNodes.filter((n) => {
+      if (n.txCount < 5 || n.isTarget) return false;
+      if (heavyInteractorsSeen.has(n.id)) return false;
+      heavyInteractorsSeen.add(n.id);
+      return true;
+    });
 
     return {
       transferCount,
@@ -327,6 +335,19 @@ function ReportTab({
 
   return (
     <div className="p-4 space-y-4 text-[12px] leading-relaxed" style={{ background: '#0c0e16' }}>
+      {/* Zero Balance Alert */}
+      {targetBalance === 0 && combinedBalance > 0 && (
+        <div
+          className="px-3 py-2.5 rounded-md border border-amber-500/40 text-[11px] font-mono"
+          style={{ background: 'rgba(245,158,11,0.08)' }}
+        >
+          <span className="text-amber-400 font-bold">! TARGET HOLDS 0 {sym}</span>
+          <span className="text-amber-300/80 ml-2">
+            but {fmt(combinedBalance)} {sym} is held across other wallets in this cluster.
+          </span>
+        </div>
+      )}
+
       {/* A. Summary */}
       <section style={{ background: '#0c0e16' }}>
         <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
@@ -335,8 +356,9 @@ function ReportTab({
         <p className="text-gray-300">
           Scanned {HL.accent(String(transferCount))} {sym} transfers
           for wallet {HL.blue(abbr(target))}.
-          Found {HL.accent(String(walletNodes.length))} unique wallets
+          Found {HL.accent(String(walletNodes.length))} wallets (EOA)
           and {HL.purple(String(contractNodes.length))} contracts/routers
+          ({HL.purple(String(knownRouterCount))} known DEX routers + {HL.purple(String(autoDetectedCount))} auto-detected)
           across activity from {HL.dim(minTs === Infinity ? '—' : fmtDate(minTs))} to {HL.dim(maxTs === 0 ? '—' : fmtDate(maxTs))}.
         </p>
       </section>

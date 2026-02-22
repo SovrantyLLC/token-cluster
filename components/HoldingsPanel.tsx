@@ -74,6 +74,22 @@ export default function HoldingsPanel({
 
   return (
     <div>
+          {/* ── Zero Balance Alert ── */}
+          {targetBalance === 0 && totalHeldByCluster > 0 && (
+            <div
+              className="mx-4 mt-4 mb-2 px-3 py-2.5 rounded-md border border-amber-500/40 text-[11px] font-mono"
+              style={{ background: 'rgba(245,158,11,0.08)' }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-amber-400 font-bold text-xs">! TARGET HOLDS 0 {tokenSymbol}</span>
+              </div>
+              <p className="text-amber-300/80 leading-relaxed">
+                The target wallet has no tokens, but {fmt(totalHeldByCluster)} {tokenSymbol} was found across {highWallets.length} cluster wallet{highWallets.length !== 1 ? 's' : ''}.
+                Tokens may have been dispersed to secondary wallets.
+              </p>
+            </div>
+          )}
+
           {/* ── Stat Cards ── */}
           <div className="grid grid-cols-3 gap-3 px-4 pt-4 pb-3">
             <StatCard

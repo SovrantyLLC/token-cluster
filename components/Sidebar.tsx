@@ -141,7 +141,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className="flex flex-col flex-shrink-0 border-r border-raised/50"
+      className="flex flex-col flex-shrink-0 border-r border-raised/50 overflow-hidden"
       style={{ width: 360, background: '#0c0e16', height: '100%' }}
     >
       {/* ═══ 1. TOKEN SELECTOR ═══ */}

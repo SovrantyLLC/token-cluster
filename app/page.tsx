@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [holdingsReport, setHoldingsReport] = useState<HoldingsReport | null>(null);
   const [visibleLayers, setVisibleLayers] = useState<Set<number>>(new Set([0, 1, 2, 3, 4]));
   const [showHoldings, setShowHoldings] = useState(false);
+  const [scanLimitHit, setScanLimitHit] = useState(false);
 
   /* ── scan (always deep) ── */
   const handleScan = useCallback(
@@ -51,6 +52,7 @@ export default function Dashboard() {
       setHoldingsReport(null);
       setShowHoldings(false);
       setVisibleLayers(new Set([0, 1, 2, 3, 4]));
+      setScanLimitHit(false);
 
       const timers: ReturnType<typeof setTimeout>[] = [];
       DEEP_SCAN_PHASES.forEach((phase, i) => {
@@ -80,6 +82,7 @@ export default function Dashboard() {
           await res.json();
         setScanResult(data.scanResult);
         setHoldingsReport(data.holdingsReport);
+        setScanLimitHit(data.scanResult.transfers.length >= limit);
         setShowAnalysis(false);
         setScanPhase('');
       } catch (err) {
@@ -178,6 +181,15 @@ export default function Dashboard() {
             </>
           ) : (
             <span className="text-xs text-gray-600 font-mono">No scan data</span>
+          )}
+          {scanLimitHit && !error && (
+            <span
+              className="text-amber-400/80 text-[10px] font-mono ml-2 px-2 py-0.5 rounded border border-amber-400/20"
+              style={{ background: 'rgba(245,158,11,0.06)' }}
+              title="The scan hit the transfer limit — some transfers may be missing. Increase the Limit setting for more complete results."
+            >
+              LIMIT HIT — increase for full data
+            </span>
           )}
           {error && <span className="text-amber-400 text-[11px] font-mono ml-2">{error}</span>}
         </div>

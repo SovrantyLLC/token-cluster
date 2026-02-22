@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
-import { fetchTokenTransfers, detectContracts, getTokenBalanceBatch } from '@/lib/avax';
+import { fetchTokenTransfers, detectContracts, getTokenBalanceBatch, fetchFundingSources } from '@/lib/avax';
 import { GraphNode, GraphLink, TransferTx, ScanResult } from '@/lib/types';
 import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { rateLimit, getRateLimitHeaders } from '@/lib/rate-limit';
@@ -173,12 +173,17 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     }
   }
 
+  // Fetch funding sources for non-contract wallets
+  const walletsToCheck = nonContractWallets.slice(0, 50);
+  const fundingSources = await fetchFundingSources(walletsToCheck);
+
   return {
     nodes,
     links,
     transfers: allTransfers,
     detectedContracts,
     balances,
+    fundingSources,
   };
 }
 

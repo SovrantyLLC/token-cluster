@@ -489,9 +489,16 @@ export default function Graph({
     nodeEls
       .append('circle')
       .attr('r', (d) => nodeRadius(d))
-      .attr('fill', (d) => nodeColor(d))
+      .attr('fill', (d) => {
+        // Hollow target node when balance is 0
+        if (d.layer === 0 && (d.balance === null || d.balance === 0)) return 'transparent';
+        return nodeColor(d);
+      })
       .attr('opacity', (d) => (d.layer === 4 ? 0.4 : 1))
-      .attr('stroke', (d) => (d.layer === 0 ? '#ffffff' : 'none'))
+      .attr('stroke', (d) => {
+        if (d.layer === 0) return d.balance === null || d.balance === 0 ? '#e8813a' : '#ffffff';
+        return 'none';
+      })
       .attr('stroke-width', (d) => (d.layer === 0 ? 2.5 : 0))
       .attr('filter', (d) => {
         if (d.layer === 0) return 'url(#glow)';
