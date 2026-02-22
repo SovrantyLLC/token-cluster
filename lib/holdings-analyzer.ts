@@ -185,7 +185,7 @@ export function reconstructWalletHistory(
   const dexNames = new Set<string>();
   let sentToWalletsAmount = 0;
   const recipientMap = new Map<string, number>();
-  let sentToContractsAmount = 0;
+  const sentToContractsAmount = 0;
   let burnedAmount = 0;
 
   for (const tx of walletTxs) {
@@ -205,13 +205,15 @@ export function reconstructWalletHistory(
       // Classify destination
       if (isBurnAddress(to)) {
         burnedAmount += value;
-      } else if (isDexRouter(to)) {
+      } else if (isDexRouter(to) || contractSet.has(to)) {
+        // DEX routers, LP pairs, and other contracts — all count as DEX/contract sells
         soldOnDexAmount += value;
         soldOnDexCount++;
-        dexNames.add(getDexName(to));
-      } else if (contractSet.has(to)) {
-        // Non-DEX contract (staking, LP, bridge)
-        sentToContractsAmount += value;
+        if (isDexRouter(to)) {
+          dexNames.add(getDexName(to));
+        } else {
+          dexNames.add(KNOWN_CONTRACTS[to] || 'DEX/Contract');
+        }
       } else {
         // Regular wallet
         sentToWalletsAmount += value;
@@ -304,7 +306,7 @@ export function reconstructWalletHistory(
     totalSent,
     netDisposed: peakBalance - currentBalance,
     disposition,
-    isGhost: peakBalance > 0 && currentBalance === 0,
+    isGhost: peakBalance > 0 && currentBalance <= peakBalance * 0.01,
   };
 }
 
