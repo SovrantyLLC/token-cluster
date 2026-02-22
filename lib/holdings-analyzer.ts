@@ -91,6 +91,7 @@ function traceTokenOrigin(
 
   let fromTarget = 0;
   let fromDex = 0;
+  let fromContract = 0;
   let fromThirdParty = 0;
   let largestSource = '';
   let largestAmount = 0;
@@ -102,8 +103,12 @@ function traceTokenOrigin(
 
     if (from === target) {
       fromTarget += value;
-    } else if (contractSet.has(from)) {
+    } else if (isDexRouter(from)) {
       fromDex += value;
+    } else if (contractSet.has(from)) {
+      // LP pairs, staking contracts, liquidity managers, etc.
+      // These are NOT DEX purchases — tokens flow back from DeFi positions.
+      fromContract += value;
     } else {
       fromThirdParty += value;
     }
@@ -115,23 +120,27 @@ function traceTokenOrigin(
     }
   }
 
-  const total = fromTarget + fromDex + fromThirdParty;
+  const total = fromTarget + fromDex + fromContract + fromThirdParty;
   if (total === 0) return { origin: 'unknown', details: 'Zero-value transfers only' };
 
-  const targetPct = fromTarget / total;
-  const dexPct = fromDex / total;
-  const thirdPct = fromThirdParty / total;
+  // For origin classification, contract-sourced tokens (LP redemptions, staking
+  // rewards) are neutral — they don't indicate independent buyer or same-owner.
+  // Only count actual DEX router purchases as "from-dex".
+  const nonContractTotal = fromTarget + fromDex + fromThirdParty;
+  const targetPct = nonContractTotal > 0 ? fromTarget / nonContractTotal : (fromTarget > 0 ? 1 : 0);
+  const dexPct = nonContractTotal > 0 ? fromDex / nonContractTotal : 0;
+  const thirdPct = nonContractTotal > 0 ? fromThirdParty / nonContractTotal : 0;
 
   let origin: TokenOrigin;
   let details: string;
 
-  if (targetPct >= 0.7) {
+  if (targetPct >= 0.7 || (fromTarget > 0 && nonContractTotal > 0 && fromTarget / nonContractTotal >= 0.7)) {
     origin = 'from-target';
     details = `Received ${fmt(fromTarget)} directly from target`;
     if (largestTs > 0) details += ` (largest: ${fmt(largestAmount)} on ${fmtDate(largestTs)})`;
   } else if (dexPct >= 0.7) {
     origin = 'from-dex';
-    details = `Acquired ${fmt(fromDex)} from DEX/contracts — likely independent buyer`;
+    details = `Acquired ${fmt(fromDex)} from DEX routers — likely independent buyer`;
   } else if (thirdPct >= 0.7) {
     origin = 'from-third-party';
     const thirdPartyConnected = transfers.some(
@@ -390,7 +399,7 @@ export function analyzeHoldings(
   fundingSources: Record<string, string>
 ): HoldingsReport {
   const target = targetWallet.toLowerCase();
-  const { nodes, links, transfers, balances, detectedContracts } = scanResult;
+  const { nodes, links, transfers, balances, detectedContracts, crossAssetLinks } = scanResult;
 
   const contractSet = new Set(detectedContracts);
   const decimals = transfers.length > 0 ? parseInt(transfers[0].tokenDecimal, 10) || 18 : 18;
@@ -492,6 +501,56 @@ export function analyzeHoldings(
     }
   }
 
+  // Build cross-asset lookup: for each wallet, which other wallets sent/received AVAX/USDC/USDT
+  const crossAssetFromTarget = new Map<string, { assets: string[]; totalValue: number; txCount: number }>();
+  const crossAssetBetweenWallets = new Map<string, { peers: Map<string, { assets: string[]; value: number }> }>();
+
+  if (crossAssetLinks && crossAssetLinks.length > 0) {
+    for (const link of crossAssetLinks) {
+      const from = link.from.toLowerCase();
+      const to = link.to.toLowerCase();
+
+      // Track cross-asset transfers from/to target
+      if (from === target) {
+        const existing = crossAssetFromTarget.get(to);
+        if (existing) {
+          if (!existing.assets.includes(link.asset)) existing.assets.push(link.asset);
+          existing.totalValue += link.value;
+          existing.txCount += link.txCount;
+        } else {
+          crossAssetFromTarget.set(to, { assets: [link.asset], totalValue: link.value, txCount: link.txCount });
+        }
+      } else if (to === target) {
+        const existing = crossAssetFromTarget.get(from);
+        if (existing) {
+          if (!existing.assets.includes(link.asset)) existing.assets.push(link.asset);
+          existing.totalValue += link.value;
+          existing.txCount += link.txCount;
+        } else {
+          crossAssetFromTarget.set(from, { assets: [link.asset], totalValue: link.value, txCount: link.txCount });
+        }
+      }
+
+      // Track cross-asset transfers between non-target wallets
+      if (from !== target && to !== target) {
+        for (const addr of [from, to]) {
+          const peer = addr === from ? to : from;
+          if (!crossAssetBetweenWallets.has(addr)) {
+            crossAssetBetweenWallets.set(addr, { peers: new Map() });
+          }
+          const entry = crossAssetBetweenWallets.get(addr)!;
+          const peerEntry = entry.peers.get(peer);
+          if (peerEntry) {
+            if (!peerEntry.assets.includes(link.asset)) peerEntry.assets.push(link.asset);
+            peerEntry.value += link.value;
+          } else {
+            entry.peers.set(peer, { assets: [link.asset], value: link.value });
+          }
+        }
+      }
+    }
+  }
+
   // Score each wallet
   const scores: WalletScore[] = [];
 
@@ -527,6 +586,14 @@ export function analyzeHoldings(
     if (sentLink && recvLink) {
       score += 30;
       reasons.push('Bidirectional transfers with target');
+    }
+
+    // ── HEURISTIC 1b: Heavy One-Way Deposits from Target (25 points) ──
+    // Target sent tokens to this wallet multiple times but wallet never sent back.
+    // Strong same-owner signal: distributing to own wallets for staking/LP.
+    if (sentLink && !recvLink && sentLink.txCount >= 2) {
+      score += 25;
+      reasons.push(`Heavy one-way deposits from target (${sentLink.txCount} sends, ${fmt(sentLink.value)} total)`);
     }
 
     // ── HEURISTIC 2: Shared Funding Source (25 points) ──
@@ -619,27 +686,106 @@ export function analyzeHoldings(
       }
     }
 
-    if (score >= 15) {
-      scores.push({
-        address: node.address,
-        score,
-        reasons,
-        fundingSource: walletFundingSource,
-        firstInteraction,
-        lastInteraction,
-        transfersWithTarget,
-        netFlowFromTarget,
-        balance: node.balance ?? 0,
-        tokenOrigin,
-        tokenOriginDetails,
-      });
+    // ── HEURISTIC 10: Cross-Asset Correlation (up to +30 points) ──
+    // If the target sent AVAX/USDC/USDT to this wallet, strong same-owner signal
+    // (funding gas or stablecoins to own wallets). Also checks for cross-asset
+    // transfers between this wallet and other cluster wallets.
+    const crossFromTarget = crossAssetFromTarget.get(addr);
+    if (crossFromTarget) {
+      score += 25;
+      reasons.push(
+        `Target sent ${crossFromTarget.assets.join('+')} to this wallet (${crossFromTarget.txCount} tx, ~${crossFromTarget.totalValue < 1 ? crossFromTarget.totalValue.toFixed(3) : fmt(crossFromTarget.totalValue)} value)`
+      );
     }
+    const crossBetween = crossAssetBetweenWallets.get(addr);
+    if (crossBetween && crossBetween.peers.size > 0) {
+      const peerCount = crossBetween.peers.size;
+      const allAssets = new Set<string>();
+      Array.from(crossBetween.peers.values()).forEach((p) => {
+        for (const a of p.assets) allAssets.add(a);
+      });
+      score += 15;
+      reasons.push(
+        `Cross-asset transfers (${Array.from(allAssets).join('+')}) with ${peerCount} other cluster wallet(s)`
+      );
+    }
+
+    scores.push({
+      address: node.address,
+      score,
+      reasons,
+      fundingSource: walletFundingSource,
+      firstInteraction,
+      lastInteraction,
+      transfersWithTarget,
+      netFlowFromTarget,
+      balance: node.balance ?? 0,
+      tokenOrigin,
+      tokenOriginDetails,
+    });
+
   }
 
   scores.sort((a, b) => b.score - a.score);
 
-  // Convert to HiddenHoldingWallet
-  const wallets: HiddenHoldingWallet[] = scores.map((s) => {
+  // ── SECOND PASS: Boost wallets funded by HIGH confidence wallets ──
+  // If a wallet's primary token source is an already-confirmed HIGH wallet,
+  // that's strong evidence of same-owner (distributing across wallets for
+  // staking, LP, etc). Also checks if gas was funded by a HIGH wallet.
+  const highScoreAddrs = new Set(
+    scores.filter((s) => s.score >= 60).map((s) => s.address.toLowerCase())
+  );
+
+  if (highScoreAddrs.size > 0) {
+    // Pre-build incoming transfer map for efficiency
+    const incomingByWallet = new Map<string, Array<{ from: string; value: number }>>();
+    for (const tx of transfers) {
+      const to = tx.to.toLowerCase();
+      if (!incomingByWallet.has(to)) incomingByWallet.set(to, []);
+      const val = parseFloat(tx.value) / Math.pow(10, decimals);
+      incomingByWallet.get(to)!.push({ from: tx.from.toLowerCase(), value: val });
+    }
+
+    for (const s of scores) {
+      const addr = s.address.toLowerCase();
+      if (highScoreAddrs.has(addr)) continue;
+
+      // Check if primary token source is a HIGH confidence wallet
+      const incoming = incomingByWallet.get(addr) || [];
+      let fromHigh = 0;
+      let totalIncoming = 0;
+      let topHighSource = '';
+      let topHighAmount = 0;
+
+      for (const entry of incoming) {
+        totalIncoming += entry.value;
+        if (highScoreAddrs.has(entry.from)) {
+          fromHigh += entry.value;
+          if (entry.value > topHighAmount) {
+            topHighAmount = entry.value;
+            topHighSource = entry.from;
+          }
+        }
+      }
+
+      if (totalIncoming > 0 && fromHigh / totalIncoming > 0.3 && fromHigh > 1000) {
+        s.score += 25;
+        s.reasons.push(`Primary token source is HIGH confidence wallet ${abbr(topHighSource)}`);
+      }
+
+      // Check if gas funded by a HIGH confidence wallet
+      const gasFunder = fundingSources[addr];
+      if (gasFunder && highScoreAddrs.has(gasFunder.toLowerCase())) {
+        s.score += 15;
+        s.reasons.push(`Gas funded by HIGH confidence wallet ${abbr(gasFunder)}`);
+      }
+    }
+
+    scores.sort((a, b) => b.score - a.score);
+  }
+
+  // Convert to HiddenHoldingWallet (filter out low-signal wallets)
+  const wallets: HiddenHoldingWallet[] = scores.filter((s) => s.score >= 15).map((s) => {
     const addr = s.address.toLowerCase();
     const nodeForAddr = nodes.find((n) => n.id === addr);
     const lpBal = nodeForAddr?.lpBalance ?? 0;
@@ -896,6 +1042,16 @@ function generateRiskFlags(
     const totalStaked = stakedHolders.reduce((s, w) => s + w.stakedBalance, 0);
     flags.push(
       `${stakedHolders.length} cluster wallet(s) have ${fmt(totalStaked)} ${tokenSymbol} staked in farm contracts`
+    );
+  }
+
+  // Cross-asset correlation flag
+  const crossAssetWallets = wallets.filter((w) =>
+    w.reasons.some((r) => r.includes('Cross-asset') || r.includes('sent AVAX') || r.includes('sent USDC') || r.includes('sent USDT') || r.includes('Target sent'))
+  );
+  if (crossAssetWallets.length > 0) {
+    flags.push(
+      `Cross-asset correlation: ${crossAssetWallets.length} wallet(s) share AVAX/USDC/USDT transfers with the target or other cluster members`
     );
   }
 

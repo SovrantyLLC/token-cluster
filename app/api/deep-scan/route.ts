@@ -5,6 +5,8 @@ import {
   detectContracts,
   getTokenBalanceBatch,
   fetchFundingSources,
+  fetchCrossAssetLinks,
+  discoverCrossAssetPeers,
 } from '@/lib/avax';
 import {
   GraphNode,
@@ -342,6 +344,98 @@ async function runDeepScan(body: DeepScanBody) {
     }
   }
 
+  // ── PHASE 4.7: Cross-asset correlation (AVAX/USDC/USDT between cluster wallets) ──
+  // Only check target + direct peers (wallets with token transfers to/from target)
+  // to keep API calls manageable. This is the set most likely to reveal same-owner.
+  const targetLowerCA = wallet.toLowerCase();
+  const directPeers = new Set<string>();
+  directPeers.add(targetLowerCA);
+  for (const tx of allTransfers) {
+    const from = tx.from.toLowerCase();
+    const to = tx.to.toLowerCase();
+    if (from === targetLowerCA && !contractSet.has(to)) directPeers.add(to);
+    if (to === targetLowerCA && !contractSet.has(from)) directPeers.add(from);
+  }
+  const crossAssetWallets = Array.from(directPeers).slice(0, 30);
+  const crossAssetLinks = crossAssetWallets.length >= 2
+    ? await fetchCrossAssetLinks(crossAssetWallets)
+    : [];
+
+  // ── PHASE 4.8: Discover hidden wallets via cross-asset transfers ──
+  // Find wallets the target sent/received AVAX/USDC/USDT to/from that are NOT
+  // in the graph yet. If they hold the target token, they're "hidden" wallets
+  // with no token transfer link but a clear funding relationship.
+  const knownAddrs = new Set<string>();
+  for (const n of nodes) knownAddrs.add(n.id);
+  const crossAssetDiscovered = await discoverCrossAssetPeers(wallet, knownAddrs);
+
+  if (crossAssetDiscovered.length > 0) {
+    // Check which of these hold the target token
+    const discoveredBalances = await getTokenBalanceBatch(
+      crossAssetDiscovered.slice(0, 50), tokenAddress, decimals
+    );
+    const holders = Object.entries(discoveredBalances)
+      .filter(([, bal]) => bal > 0)
+      .map(([addr]) => addr);
+
+    if (holders.length > 0) {
+      // Add them as nodes in the graph (no token transfer links, but they hold the token)
+      Object.assign(balances, discoveredBalances);
+      for (const addr of holders) {
+        const isContract = contractSet.has(addr);
+        if (!isContract) {
+          nodes.push({
+            id: addr,
+            address: addr,
+            isTarget: false,
+            isContract: false,
+            label: null,
+            txCount: 0,
+            volIn: 0,
+            volOut: 0,
+            balance: discoveredBalances[addr] ?? 0,
+            netPosition: 0,
+            firstSeen: 0,
+            lastSeen: 0,
+            peakBalance: null,
+            peakDate: null,
+            isGhost: false,
+            disposition: null,
+            lpBalance: 0,
+            stakedBalance: 0,
+            totalHoldings: discoveredBalances[addr] ?? 0,
+            lpPositions: [],
+            stakingPositions: [],
+          });
+        }
+      }
+
+      // Re-run cross-asset to include the newly discovered wallets
+      const updatedPeers = new Set(directPeers);
+      for (const addr of holders) updatedPeers.add(addr);
+      const updatedCrossAssetWallets = Array.from(updatedPeers).slice(0, 40);
+      const updatedCrossAssetLinks = await fetchCrossAssetLinks(updatedCrossAssetWallets);
+      crossAssetLinks.push(...updatedCrossAssetLinks.filter(
+        (l) => !crossAssetLinks.some(
+          (e) => e.from === l.from && e.to === l.to && e.asset === l.asset
+        )
+      ));
+
+      // Check LP and staking for discovered holders
+      if (lpPairs.length > 0) {
+        const discoveredLP = await getLPPositions(holders, tokenAddress, decimals, lpPairs);
+        Object.assign(lpPositions, discoveredLP);
+        attachLPToNodes(nodes, lpPositions);
+      }
+      const discoveredReserves = buildLPReserves(lpPositions);
+      const discoveredStaking = await getStakingPositions(holders, tokenAddress, decimals, discoveredReserves);
+      if (Object.keys(discoveredStaking).length > 0) {
+        Object.assign(stakingPositions, discoveredStaking);
+        attachStakingToNodes(nodes, stakingPositions);
+      }
+    }
+  }
+
   // ── PHASE 5: Run holdings analysis ──
   const scanResult: ScanResult = {
     nodes,
@@ -353,6 +447,7 @@ async function runDeepScan(body: DeepScanBody) {
     lpPairs,
     lpPositions,
     stakingPositions,
+    crossAssetLinks,
   };
 
   const holdingsReport = analyzeHoldings(scanResult, wallet, 'TOKEN', fundingSources);
@@ -439,6 +534,24 @@ async function runDeepScan(body: DeepScanBody) {
       Object.assign(fundingSources, newFunding);
     }
 
+    // Re-run cross-asset correlation with expanded wallet set (target + direct peers)
+    const expandedDirectPeers = new Set<string>();
+    expandedDirectPeers.add(targetLowerCA);
+    for (const tx of allTransfers) {
+      const from = tx.from.toLowerCase();
+      const to = tx.to.toLowerCase();
+      if (from === targetLowerCA && !contractSet.has(to)) expandedDirectPeers.add(to);
+      if (to === targetLowerCA && !contractSet.has(from)) expandedDirectPeers.add(from);
+    }
+    // Also include HIGH confidence wallets from first pass as peers
+    for (const hw of highWallets) {
+      expandedDirectPeers.add(hw.address.toLowerCase());
+    }
+    const expandedCrossAssetWallets = Array.from(expandedDirectPeers).slice(0, 40);
+    const expandedCrossAssetLinks = expandedCrossAssetWallets.length >= 2
+      ? await fetchCrossAssetLinks(expandedCrossAssetWallets)
+      : [];
+
     const expandedScanResult: ScanResult = {
       nodes: expanded.nodes,
       links: expanded.links,
@@ -449,6 +562,7 @@ async function runDeepScan(body: DeepScanBody) {
       lpPairs,
       lpPositions,
       stakingPositions,
+      crossAssetLinks: expandedCrossAssetLinks,
     };
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);
@@ -507,7 +621,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid token address' }, { status: 400 });
     }
 
-    const result = await withOverallTimeout(runDeepScan(body), 120_000, 'Deep scan');
+    const result = await withOverallTimeout(runDeepScan(body), 180_000, 'Deep scan');
 
     return NextResponse.json(result, {
       headers: getRateLimitHeaders(rl.remaining, 30),

@@ -172,10 +172,10 @@ export default function Dashboard() {
               <Stat label="Volume" value={fmt(totalVolume)} accent hint="Total token volume transferred across all edges" />
               {holdingsReport && (
                 <Stat
-                  label="Est. Holdings"
-                  value={fmt(holdingsReport.targetBalance + holdingsReport.totalHeldByCluster)}
+                  label="True Holdings"
+                  value={fmt(holdingsReport.totalTrueHoldings)}
                   accent
-                  hint="Estimated total tokens held by target + all HIGH/MED confidence wallets likely owned by the same person"
+                  hint="Total tokens across wallets + LP positions + staked positions for target + all HIGH/MED confidence cluster wallets"
                 />
               )}
             </>
@@ -268,7 +268,7 @@ export default function Dashboard() {
                     HOLDINGS
                   </span>
                   <span className="text-xs font-mono text-[#c9a227]">
-                    ~{fmt(holdingsReport.targetBalance + holdingsReport.totalHeldByCluster)} {currentToken.symbol}
+                    ~{fmt(holdingsReport.totalTrueHoldings)} {currentToken.symbol}
                   </span>
                   <span className="text-[10px] font-mono text-gray-500">
                     across {holdingsReport.wallets.filter((w) => w.confidence === 'high').length + 1} wallets

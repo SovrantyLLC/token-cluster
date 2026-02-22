@@ -212,6 +212,7 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     lpPairs: [],
     lpPositions: {},
     stakingPositions: {},
+    crossAssetLinks: [],
   };
 }
 

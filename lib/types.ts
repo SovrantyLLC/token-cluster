@@ -40,6 +40,16 @@ export interface StakingPositionInfo {
   sharePercentage?: number;
 }
 
+export interface CrossAssetLink {
+  from: string;
+  to: string;
+  asset: 'AVAX' | 'USDC' | 'USDT';
+  value: number;
+  txCount: number;
+  firstSeen: number;
+  lastSeen: number;
+}
+
 export interface GraphNode {
   id: string;
   address: string;
@@ -82,6 +92,7 @@ export interface ScanResult {
   lpPairs: string[];
   lpPositions: Record<string, LPPosition[]>;
   stakingPositions: Record<string, StakingPositionInfo[]>;
+  crossAssetLinks: CrossAssetLink[];
 }
 
 export type TokenOrigin = 'from-target' | 'from-dex' | 'from-third-party' | 'mixed' | 'unknown';

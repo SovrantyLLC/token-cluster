@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { TransferTx, TokenInfo } from './types';
+import { TransferTx, TokenInfo, CrossAssetLink } from './types';
 import { AVAX_RPC, ROUTESCAN_API, SNOWSCAN_API, MULTICALL3_ADDRESS } from './constants';
 import { fetchWithTimeout } from './fetch-with-timeout';
 
@@ -291,4 +291,237 @@ export async function lookupToken(address: string): Promise<TokenInfo | null> {
   }
 
   return null;
+}
+
+// ─── Cross-Asset Correlation ──────────────────────────────────────────────────
+// Fetches AVAX and stablecoin transfers between a set of wallets to detect
+// cross-asset funding patterns (e.g. sending gas money or USDC to buy tokens).
+
+const USDC_AVAX = '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E';
+const USDT_AVAX = '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7';
+
+interface RawNormalTx {
+  from: string;
+  to: string;
+  value: string;
+  timeStamp: string;
+}
+
+async function fetchNormalTxs(
+  wallet: string,
+  limit: number = 200
+): Promise<RawNormalTx[]> {
+  const apis = [ROUTESCAN_API, SNOWSCAN_API];
+  for (const baseUrl of apis) {
+    try {
+      const params = new URLSearchParams({
+        module: 'account',
+        action: 'txlist',
+        address: wallet,
+        page: '1',
+        offset: String(limit),
+        sort: 'desc',
+      });
+      const res = await fetchWithTimeout(
+        `${baseUrl}?${params}`,
+        { next: { revalidate: 0 } },
+        10_000
+      );
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (json.status !== '1' || !Array.isArray(json.result)) continue;
+      return json.result as RawNormalTx[];
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+async function fetchStablecoinTxs(
+  wallet: string,
+  stablecoin: string,
+  limit: number = 200
+): Promise<TransferTx[]> {
+  const apis = [ROUTESCAN_API, SNOWSCAN_API];
+  for (const baseUrl of apis) {
+    try {
+      const params = new URLSearchParams({
+        module: 'account',
+        action: 'tokentx',
+        contractaddress: stablecoin,
+        address: wallet,
+        page: '1',
+        offset: String(limit),
+        sort: 'desc',
+      });
+      const res = await fetchWithTimeout(
+        `${baseUrl}?${params}`,
+        { next: { revalidate: 0 } },
+        10_000
+      );
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (json.status !== '1' || !Array.isArray(json.result)) continue;
+      return json.result as TransferTx[];
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+export async function fetchCrossAssetLinks(
+  wallets: string[]
+): Promise<CrossAssetLink[]> {
+  if (wallets.length < 2) return [];
+
+  const walletSet = new Set(wallets.map((w) => w.toLowerCase()));
+  const linkMap = new Map<string, CrossAssetLink>();
+
+  function addLink(
+    from: string,
+    to: string,
+    asset: 'AVAX' | 'USDC' | 'USDT',
+    value: number,
+    ts: number
+  ) {
+    const key = `${from}->${to}:${asset}`;
+    const existing = linkMap.get(key);
+    if (existing) {
+      existing.value += value;
+      existing.txCount++;
+      existing.firstSeen = Math.min(existing.firstSeen, ts);
+      existing.lastSeen = Math.max(existing.lastSeen, ts);
+    } else {
+      linkMap.set(key, {
+        from,
+        to,
+        asset,
+        value,
+        txCount: 1,
+        firstSeen: ts,
+        lastSeen: ts,
+      });
+    }
+  }
+
+  // Fetch in batches of 5 to avoid rate limits
+  const BATCH = 5;
+  for (let i = 0; i < wallets.length; i += BATCH) {
+    const batch = wallets.slice(i, i + BATCH);
+
+    const results = await Promise.all(
+      batch.map(async (wallet) => {
+        const addr = wallet.toLowerCase();
+        const [normalTxs, usdcTxs, usdtTxs] = await Promise.all([
+          fetchNormalTxs(addr, 200),
+          fetchStablecoinTxs(addr, USDC_AVAX, 200),
+          fetchStablecoinTxs(addr, USDT_AVAX, 200),
+        ]);
+        return { addr, normalTxs, usdcTxs, usdtTxs };
+      })
+    );
+
+    for (const { addr, normalTxs, usdcTxs, usdtTxs } of results) {
+      // AVAX transfers between cluster wallets
+      for (const tx of normalTxs) {
+        const from = tx.from.toLowerCase();
+        const to = (tx.to || '').toLowerCase();
+        if (!to) continue;
+        const val = Number(BigInt(tx.value || '0')) / 1e18;
+        if (val < 0.001) continue; // ignore dust
+        const ts = parseInt(tx.timeStamp, 10);
+
+        if (from === addr && walletSet.has(to) && to !== addr) {
+          addLink(from, to, 'AVAX', val, ts);
+        } else if (to === addr && walletSet.has(from) && from !== addr) {
+          addLink(from, to, 'AVAX', val, ts);
+        }
+      }
+
+      // USDC transfers between cluster wallets
+      for (const tx of usdcTxs) {
+        const from = tx.from.toLowerCase();
+        const to = tx.to.toLowerCase();
+        const val = parseFloat(tx.value) / 1e6; // USDC has 6 decimals
+        if (val < 0.01) continue;
+        const ts = parseInt(tx.timeStamp, 10);
+
+        if (from === addr && walletSet.has(to) && to !== addr) {
+          addLink(from, to, 'USDC', val, ts);
+        } else if (to === addr && walletSet.has(from) && from !== addr) {
+          addLink(from, to, 'USDC', val, ts);
+        }
+      }
+
+      // USDT transfers between cluster wallets
+      for (const tx of usdtTxs) {
+        const from = tx.from.toLowerCase();
+        const to = tx.to.toLowerCase();
+        const val = parseFloat(tx.value) / 1e6; // USDT has 6 decimals
+        if (val < 0.01) continue;
+        const ts = parseInt(tx.timeStamp, 10);
+
+        if (from === addr && walletSet.has(to) && to !== addr) {
+          addLink(from, to, 'USDT', val, ts);
+        } else if (to === addr && walletSet.has(from) && from !== addr) {
+          addLink(from, to, 'USDT', val, ts);
+        }
+      }
+    }
+
+    // Rate limit between batches
+    if (i + BATCH < wallets.length) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+
+  return Array.from(linkMap.values());
+}
+
+// ─── Cross-Asset Peer Discovery ─────────────────────────────────────────────
+// Finds wallets that the target sent/received AVAX or stablecoins to/from
+// but that are NOT already known. These are candidates for "hidden" wallets
+// that have no token transfer link but share gas/stablecoin funding.
+
+export async function discoverCrossAssetPeers(
+  targetWallet: string,
+  knownAddresses: Set<string>
+): Promise<string[]> {
+  const target = targetWallet.toLowerCase();
+  const discovered = new Set<string>();
+
+  // Fetch target's AVAX transactions and stablecoin transfers
+  const [normalTxs, usdcTxs, usdtTxs] = await Promise.all([
+    fetchNormalTxs(target, 500),
+    fetchStablecoinTxs(target, USDC_AVAX, 200),
+    fetchStablecoinTxs(target, USDT_AVAX, 200),
+  ]);
+
+  // Find AVAX peers not already known
+  for (const tx of normalTxs) {
+    const from = tx.from.toLowerCase();
+    const to = (tx.to || '').toLowerCase();
+    if (!to) continue;
+    const val = Number(BigInt(tx.value || '0')) / 1e18;
+    if (val < 0.01) continue; // ignore dust
+
+    const peer = from === target ? to : from;
+    if (peer !== target && !knownAddresses.has(peer)) {
+      discovered.add(peer);
+    }
+  }
+
+  // Find stablecoin peers not already known
+  for (const tx of [...usdcTxs, ...usdtTxs]) {
+    const from = tx.from.toLowerCase();
+    const to = tx.to.toLowerCase();
+    const peer = from === target ? to : from;
+    if (peer !== target && !knownAddresses.has(peer)) {
+      discovered.add(peer);
+    }
+  }
+
+  return Array.from(discovered);
 }
