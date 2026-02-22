@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [holdingsReport, setHoldingsReport] = useState<HoldingsReport | null>(null);
   const [isDeepScan, setIsDeepScan] = useState(false);
+  const [visibleLayers, setVisibleLayers] = useState<Set<number>>(new Set([0, 1, 2, 3, 4]));
 
   /* ── regular scan ── */
   const handleScan = useCallback(
@@ -52,6 +53,7 @@ export default function Dashboard() {
       setScanResult(null);
       setHoldingsReport(null);
       setIsDeepScan(false);
+      setVisibleLayers(new Set([0, 1, 2, 3, 4]));
 
       try {
         const phaseTimer = setTimeout(() => setScanPhase('Detecting contracts...'), 3000);
@@ -104,8 +106,8 @@ export default function Dashboard() {
       setError('');
       setScanResult(null);
       setHoldingsReport(null);
+      setVisibleLayers(new Set([0, 1, 2, 3, 4]));
 
-      // Cycle through deep scan phases on timers
       const timers: ReturnType<typeof setTimeout>[] = [];
       DEEP_SCAN_PHASES.forEach((phase, i) => {
         timers.push(setTimeout(() => setScanPhase(phase), i * 4000));
@@ -146,10 +148,7 @@ export default function Dashboard() {
     [currentToken]
   );
 
-  /* ── view mode ── */
-  const viewMode: 'all' | 'w2w' | 'no-lp' = w2wMode ? 'w2w' : hideLPs ? 'no-lp' : 'all';
-
-  /* ── filter nodes + links ── */
+  /* ── filter nodes + links for sidebar list (not for graph — graph does its own filtering) ── */
   const { filteredNodes, filteredLinks } = useMemo(() => {
     if (!scanResult) return { filteredNodes: [], filteredLinks: [] };
 
@@ -167,12 +166,16 @@ export default function Dashboard() {
     });
 
     const nodeIds = new Set(nodes.map((n) => n.id));
-    const links = scanResult.links.filter(
+    const lnks = scanResult.links.filter(
       (l) => nodeIds.has(l.source) && nodeIds.has(l.target)
     );
 
-    return { filteredNodes: nodes, filteredLinks: links };
+    return { filteredNodes: nodes, filteredLinks: lnks };
   }, [scanResult, activeFilter, w2wMode, hideLPs]);
+
+  /* ── all nodes/links for graph (graph handles layer filtering internally) ── */
+  const allNodes = scanResult?.nodes ?? [];
+  const allLinks = scanResult?.links ?? [];
 
   /* ── detectedContracts set ── */
   const detectedContracts = useMemo(
@@ -183,16 +186,6 @@ export default function Dashboard() {
   /* ── topbar stats ── */
   const totalVolume = filteredLinks.reduce((s, l) => s + l.value, 0);
 
-  /* ── holdings wallet set for graph coloring ── */
-  const holdingsWalletMap = useMemo(() => {
-    if (!holdingsReport) return null;
-    const map = new Map<string, 'high' | 'medium' | 'low'>();
-    for (const w of holdingsReport.wallets) {
-      map.set(w.address.toLowerCase(), w.confidence);
-    }
-    return map;
-  }, [holdingsReport]);
-
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: '#06070b' }}>
       {/* ═══ TOPBAR ═══ */}
@@ -200,7 +193,6 @@ export default function Dashboard() {
         className="flex items-center justify-between px-4 h-11 flex-shrink-0 border-b border-raised/40"
         style={{ background: '#0c0e16' }}
       >
-        {/* left: logo + title */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span
@@ -212,7 +204,7 @@ export default function Dashboard() {
             <span className="text-sm font-semibold text-gray-200 tracking-tight">
               Token Cluster Map
             </span>
-            <span className="text-[10px] text-gray-600 font-mono">v3</span>
+            <span className="text-[10px] text-gray-600 font-mono">v4</span>
           </div>
 
           <span
@@ -223,7 +215,6 @@ export default function Dashboard() {
           </span>
         </div>
 
-        {/* center: stats or scan progress */}
         <div className="flex items-center gap-4">
           {isScanning ? (
             <div className="flex items-center gap-2">
@@ -252,21 +243,8 @@ export default function Dashboard() {
           {error && <span className="text-amber-400 text-[11px] font-mono ml-2">{error}</span>}
         </div>
 
-        {/* right: analysis toggle */}
         <div className="flex items-center gap-2">
-          {scanResult && !holdingsReport && (
-            <button
-              onClick={() => setShowAnalysis(!showAnalysis)}
-              className={`text-[11px] font-mono px-3 py-1 rounded-md border transition-colors ${
-                showAnalysis
-                  ? 'text-[#c9a227] border-[#c9a227]/40 bg-[#c9a227]/10'
-                  : 'text-gray-500 border-raised hover:border-gray-500 hover:text-gray-300'
-              }`}
-            >
-              Analysis
-            </button>
-          )}
-          {holdingsReport && (
+          {scanResult && (
             <button
               onClick={() => setShowAnalysis(!showAnalysis)}
               className={`text-[11px] font-mono px-3 py-1 rounded-md border transition-colors ${
@@ -301,49 +279,30 @@ export default function Dashboard() {
           onWalletClick={() => {}}
         />
 
-        <main
-          className="flex-1 flex flex-col min-w-0"
-          style={{ background: '#06070b' }}
-        >
+        <main className="flex-1 flex flex-col min-w-0" style={{ background: '#06070b' }}>
           <div className="flex-1 p-2 min-h-0">
             <Graph
-              nodes={filteredNodes}
-              links={filteredLinks}
+              nodes={allNodes}
+              links={allLinks}
               targetWallet={targetWallet}
               tokenSymbol={currentToken.symbol}
-              viewMode={viewMode}
-              holdingsMap={holdingsWalletMap}
+              holdingsReport={holdingsReport}
+              detectedContracts={detectedContracts}
+              visibleLayers={visibleLayers}
               onNodeClick={() => {}}
+              onLayerToggle={setVisibleLayers}
             />
           </div>
 
-          {/* Holdings Panel — shown when deep scan results exist */}
           {holdingsReport && (
             <HoldingsPanel
               report={holdingsReport}
               tokenSymbol={currentToken.symbol}
-              onWalletClick={(addr) => {
-                setTargetWallet(addr);
-              }}
+              onWalletClick={(addr) => setTargetWallet(addr)}
             />
           )}
 
-          {/* Analysis Panel — shown for regular scan or when toggled */}
-          {showAnalysis && !holdingsReport && (
-            <AnalysisPanel
-              isOpen={showAnalysis}
-              nodes={scanResult?.nodes ?? []}
-              links={scanResult?.links ?? []}
-              transfers={scanResult?.transfers ?? []}
-              targetWallet={targetWallet}
-              tokenSymbol={currentToken.symbol}
-              detectedContracts={detectedContracts}
-              onClose={() => setShowAnalysis(false)}
-            />
-          )}
-
-          {/* Analysis Panel toggled ON alongside holdings report */}
-          {showAnalysis && holdingsReport && scanResult && (
+          {showAnalysis && scanResult && (
             <AnalysisPanel
               isOpen={showAnalysis}
               nodes={scanResult.nodes}
@@ -358,7 +317,6 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* ═══ TOKEN MODAL ═══ */}
       <TokenModal
         open={showTokenModal}
         onClose={() => setShowTokenModal(false)}
@@ -368,14 +326,11 @@ export default function Dashboard() {
   );
 }
 
-/* ── topbar stat chip ── */
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-[10px] text-gray-600 font-mono uppercase">{label}</span>
-      <span
-        className={`text-xs font-mono font-bold ${accent ? 'text-[#c9a227]' : 'text-gray-300'}`}
-      >
+      <span className={`text-xs font-mono font-bold ${accent ? 'text-[#c9a227]' : 'text-gray-300'}`}>
         {value}
       </span>
     </div>
