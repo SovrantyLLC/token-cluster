@@ -643,7 +643,8 @@ export function analyzeHoldings(
     const addr = s.address.toLowerCase();
     const nodeForAddr = nodes.find((n) => n.id === addr);
     const lpBal = nodeForAddr?.lpBalance ?? 0;
-    const totalHoldings = s.balance + lpBal;
+    const stakedBal = nodeForAddr?.stakedBalance ?? 0;
+    const totalHoldings = s.balance + lpBal + stakedBal;
     return {
       address: s.address,
       balance: s.balance,
@@ -657,6 +658,7 @@ export function analyzeHoldings(
       tokenOrigin: s.tokenOrigin,
       tokenOriginDetails: s.tokenOriginDetails,
       lpBalance: lpBal,
+      stakedBalance: stakedBal,
       totalHoldings,
     };
   });
@@ -687,11 +689,15 @@ export function analyzeHoldings(
   const totalHeldByCluster = confirmedHoldings + suspectedHoldings;
   const totalPossibleHidden = possibleHoldings;
 
-  // LP totals
+  // LP + staking totals
   const targetNodeLP = targetNode?.lpBalance ?? 0;
+  const targetNodeStaked = targetNode?.stakedBalance ?? 0;
   const clusterLP = [...highWallets, ...medWallets].reduce((s, w) => s + w.lpBalance, 0);
+  const clusterStaked = [...highWallets, ...medWallets].reduce((s, w) => s + w.stakedBalance, 0);
   const totalInLP = targetNodeLP + clusterLP;
-  const totalTrueHoldings = targetBalance + totalHeldByCluster + totalInLP;
+  const totalStaked = targetNodeStaked + clusterStaked;
+  const totalWalletBalances = targetBalance + confirmedHoldings + suspectedHoldings;
+  const totalTrueHoldings = totalWalletBalances + totalInLP + totalStaked;
 
   // Build outbound summary
   const outboundSummary = buildOutboundSummary(
@@ -716,7 +722,9 @@ export function analyzeHoldings(
     targetBalance,
     totalHeldByCluster,
     totalPossibleHidden,
+    totalWalletBalances,
     totalInLP,
+    totalStaked,
     totalTrueHoldings,
     wallets,
     clusterSummary,
@@ -882,6 +890,15 @@ function generateRiskFlags(
     );
   }
 
+  // Staking flag
+  const stakedHolders = wallets.filter((w) => w.stakedBalance > 0);
+  if (stakedHolders.length > 0) {
+    const totalStaked = stakedHolders.reduce((s, w) => s + w.stakedBalance, 0);
+    flags.push(
+      `${stakedHolders.length} cluster wallet(s) have ${fmt(totalStaked)} ${tokenSymbol} staked in farm contracts`
+    );
+  }
+
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
   let recentAmount = 0;
   let recentCount = 0;
@@ -992,14 +1009,17 @@ function generateSummary(
   if (totalWallets > 0) {
     const totalEstimate = targetBalance + confirmedHoldings + suspectedHoldings;
     const lpTotal = [...highWallets, ...medWallets].reduce((s, w) => s + (w.lpBalance ?? 0), 0);
-    if (lpTotal > 0) {
-      parts.push(
-        `LP POSITIONS: ${fmt(lpTotal)} ${tokenSymbol} held in liquidity pools across cluster wallets.`
-      );
+    const stakedTotal = [...highWallets, ...medWallets].reduce((s, w) => s + (w.stakedBalance ?? 0), 0);
+    const defiParts: string[] = [];
+    if (lpTotal > 0) defiParts.push(`${fmt(lpTotal)} in LP`);
+    if (stakedTotal > 0) defiParts.push(`${fmt(stakedTotal)} staked`);
+    if (defiParts.length > 0) {
+      parts.push(`DEFI POSITIONS: ${defiParts.join(', ')} ${tokenSymbol} across cluster wallets.`);
     }
-    const trueTotal = totalEstimate + lpTotal;
+    const trueTotal = totalEstimate + lpTotal + stakedTotal;
+    const suffix = defiParts.length > 0 ? ' (including DeFi positions)' : '';
     parts.push(
-      `CURRENT ESTIMATED SAME-OWNER HOLDINGS: ${fmt(trueTotal)} ${tokenSymbol} across ${totalWallets + 1} wallets${lpTotal > 0 ? ' (including LP)' : ''}.`
+      `CURRENT ESTIMATED SAME-OWNER HOLDINGS: ${fmt(trueTotal)} ${tokenSymbol} across ${totalWallets + 1} wallets${suffix}.`
     );
   } else {
     parts.push('No strong same-owner signals were detected among connected wallets.');

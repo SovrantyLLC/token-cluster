@@ -29,6 +29,17 @@ export interface LPPosition {
   otherTokenReserve: number;
 }
 
+export interface StakingPositionInfo {
+  contractAddress: string;
+  contractLabel: string;
+  stakedAsset: 'token' | 'lp-token';
+  stakedAmount: number;
+  underlyingFLD: number;
+  lpPairAddress?: string;
+  lpShareOfFLD?: number;
+  sharePercentage?: number;
+}
+
 export interface GraphNode {
   id: string;
   address: string;
@@ -47,8 +58,10 @@ export interface GraphNode {
   isGhost: boolean;
   disposition: DispositionBreakdown | null;
   lpBalance: number;
+  stakedBalance: number;
   totalHoldings: number;
   lpPositions: LPPosition[];
+  stakingPositions: StakingPositionInfo[];
 }
 
 export interface GraphLink {
@@ -68,6 +81,7 @@ export interface ScanResult {
   fundingSources?: Record<string, string>;
   lpPairs: string[];
   lpPositions: Record<string, LPPosition[]>;
+  stakingPositions: Record<string, StakingPositionInfo[]>;
 }
 
 export type TokenOrigin = 'from-target' | 'from-dex' | 'from-third-party' | 'mixed' | 'unknown';
@@ -85,6 +99,7 @@ export interface HiddenHoldingWallet {
   tokenOrigin: TokenOrigin;
   tokenOriginDetails: string;
   lpBalance: number;
+  stakedBalance: number;
   totalHoldings: number;
 }
 
@@ -130,7 +145,9 @@ export interface HoldingsReport {
   targetBalance: number;
   totalHeldByCluster: number;
   totalPossibleHidden: number;
+  totalWalletBalances: number;
   totalInLP: number;
+  totalStaked: number;
   totalTrueHoldings: number;
   wallets: HiddenHoldingWallet[];
   clusterSummary: string;

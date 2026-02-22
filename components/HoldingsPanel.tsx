@@ -125,9 +125,10 @@ function generateMarkdownReport(
   const confirmedH = highW.reduce((s, w) => s + w.balance, 0);
   lines.push(`- HIGH confidence wallets: **${highW.length}** holding **${fmt(confirmedH)} ${tokenSymbol}**`);
   lines.push(`- MEDIUM confidence wallets: **${medW.length}** holding **${fmt(report.totalHeldByCluster - confirmedH)} ${tokenSymbol}**`);
-  if (report.totalInLP > 0) {
-    lines.push(`- In LP positions: **${fmt(report.totalInLP)} ${tokenSymbol}**`);
-    lines.push(`- True total (wallet + LP): **${fmt(report.totalTrueHoldings)} ${tokenSymbol}**`);
+  if (report.totalInLP > 0 || report.totalStaked > 0) {
+    if (report.totalInLP > 0) lines.push(`- In LP positions: **${fmt(report.totalInLP)} ${tokenSymbol}**`);
+    if (report.totalStaked > 0) lines.push(`- Staked in farms: **${fmt(report.totalStaked)} ${tokenSymbol}**`);
+    lines.push(`- True total (wallet + LP + staked): **${fmt(report.totalTrueHoldings)} ${tokenSymbol}**`);
   } else {
     lines.push(`- Total estimated same-owner: **${fmt(report.targetBalance + report.totalHeldByCluster)} ${tokenSymbol}**`);
   }
@@ -178,8 +179,11 @@ function generateMarkdownReport(
   for (const w of report.wallets) {
     const conf = w.confidence.toUpperCase();
     const origin = w.tokenOrigin !== 'unknown' ? ` [${w.tokenOrigin}]` : '';
-    const lpNote = w.lpBalance > 0 ? ` (+${fmt(w.lpBalance)} in LP)` : '';
-    lines.push(`- **${conf}** \`${w.address}\` — ${fmt(w.balance)} ${tokenSymbol}${lpNote}${origin}`);
+    const defiParts: string[] = [];
+    if (w.lpBalance > 0) defiParts.push(`${fmt(w.lpBalance)} LP`);
+    if (w.stakedBalance > 0) defiParts.push(`${fmt(w.stakedBalance)} staked`);
+    const defiNote = defiParts.length > 0 ? ` (+${defiParts.join(', ')})` : '';
+    lines.push(`- **${conf}** \`${w.address}\` — ${fmt(w.balance)} ${tokenSymbol}${defiNote}${origin}`);
     lines.push(`  - ${w.reasons.join(', ')}`);
     if (w.tokenOriginDetails) lines.push(`  - Origin: ${w.tokenOriginDetails}`);
   }
@@ -237,6 +241,7 @@ export default function HoldingsPanel({
     totalHeldByCluster,
     totalPossibleHidden,
     totalInLP,
+    totalStaked,
     totalTrueHoldings,
     wallets,
     clusterSummary,
@@ -293,45 +298,61 @@ export default function HoldingsPanel({
       )}
 
       {/* ── Stat Cards ── */}
-      <div className={`grid gap-2 px-4 pt-4 pb-3 ${totalInLP > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
-        <StatCard
-          label="TARGET"
-          value={fmt(targetBalance)}
-          sub={targetBalance === 0 ? 'EMPTIED' : tokenSymbol}
-          variant={targetBalance === 0 ? 'warning' : 'default'}
-          hint="Current token balance held directly in the target wallet"
-        />
-        <StatCard
-          label="SOLD ON DEX"
-          value={fmt(outboundSummary.toDex.amount)}
-          sub={`${outboundSummary.toDex.percentage.toFixed(1)}% of outbound`}
-          variant="purple"
-          hint="Tokens sent to DEX contracts / routers — likely sold/liquidated"
-        />
-        <StatCard
-          label="CONFIRMED HELD"
-          value={fmt(confirmedHoldings + suspectedHoldings)}
-          sub={`${highWallets.length} HIGH + ${medWallets.length} MED`}
-          variant="green"
-          hint="Tokens held in HIGH and MEDIUM confidence wallets — likely same owner"
-        />
-        {totalInLP > 0 && (
-          <StatCard
-            label="IN LP"
-            value={fmt(totalInLP)}
-            sub="in liquidity pools"
-            variant="lp"
-            hint="Tokens held inside DEX liquidity pools — hidden from simple balance checks"
-          />
-        )}
-        <StatCard
-          label={totalInLP > 0 ? 'TRUE TOTAL' : 'TOTAL ESTIMATED'}
-          value={fmt(totalInLP > 0 ? totalTrueHoldings : totalEstimate)}
-          sub={`across ${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}${totalInLP > 0 ? ' + LP' : ''}`}
-          variant="accent"
-          hint={totalInLP > 0 ? 'Target + cluster wallets + LP positions — true total holdings' : 'Target balance + all cluster wallet balances combined'}
-        />
-      </div>
+      {(() => {
+        const hasDefi = totalInLP > 0 || totalStaked > 0;
+        const defiCount = (totalInLP > 0 ? 1 : 0) + (totalStaked > 0 ? 1 : 0);
+        const cols = 4 + defiCount;
+        return (
+          <div className={`grid gap-2 px-4 pt-4 pb-3`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+            <StatCard
+              label="WALLET"
+              value={fmt(targetBalance + confirmedHoldings + suspectedHoldings)}
+              sub={`${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}`}
+              variant={targetBalance === 0 && totalHeldByCluster === 0 ? 'warning' : 'default'}
+              hint="Token balances held directly in wallets (target + cluster)"
+            />
+            <StatCard
+              label="SOLD ON DEX"
+              value={fmt(outboundSummary.toDex.amount)}
+              sub={`${outboundSummary.toDex.percentage.toFixed(1)}% of outbound`}
+              variant="purple"
+              hint="Tokens sent to DEX contracts / routers — likely sold/liquidated"
+            />
+            <StatCard
+              label="CONFIRMED HELD"
+              value={fmt(confirmedHoldings + suspectedHoldings)}
+              sub={`${highWallets.length} HIGH + ${medWallets.length} MED`}
+              variant="green"
+              hint="Tokens held in HIGH and MEDIUM confidence wallets — likely same owner"
+            />
+            {totalInLP > 0 && (
+              <StatCard
+                label="IN LP"
+                value={fmt(totalInLP)}
+                sub="in liquidity pools"
+                variant="lp"
+                hint="Tokens held inside DEX liquidity pools — hidden from simple balance checks"
+              />
+            )}
+            {totalStaked > 0 && (
+              <StatCard
+                label="STAKED"
+                value={fmt(totalStaked)}
+                sub="in farm contracts"
+                variant="staked"
+                hint="Tokens staked in farm/staking contracts (e.g. Lab91) — LP tokens deposited for yield"
+              />
+            )}
+            <StatCard
+              label={hasDefi ? 'TRUE TOTAL' : 'TOTAL ESTIMATED'}
+              value={fmt(hasDefi ? totalTrueHoldings : totalEstimate)}
+              sub={`across ${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}${hasDefi ? ' + DeFi' : ''}`}
+              variant="accent"
+              hint={hasDefi ? 'Wallet balances + LP positions + staked positions — true total holdings' : 'Target balance + all cluster wallet balances combined'}
+            />
+          </div>
+        );
+      })()}
 
       {/* ── Export Button ── */}
       <div className="px-4 pb-3 flex justify-end">
@@ -386,6 +407,11 @@ export default function HoldingsPanel({
                   {w.lpBalance > 0 && (
                     <span className="text-[10px] font-mono flex-shrink-0 px-1.5 py-0.5 rounded text-[#9b59b6] bg-[#9b59b6]/10">
                       +{fmt(w.lpBalance)} LP
+                    </span>
+                  )}
+                  {w.stakedBalance > 0 && (
+                    <span className="text-[10px] font-mono flex-shrink-0 px-1.5 py-0.5 rounded text-orange-400 bg-orange-400/10">
+                      +{fmt(w.stakedBalance)} staked
                     </span>
                   )}
                   {ob.text && (
@@ -570,7 +596,7 @@ function StatCard({
   label: string;
   value: string;
   sub: string;
-  variant?: 'default' | 'accent' | 'green' | 'purple' | 'warning' | 'lp';
+  variant?: 'default' | 'accent' | 'green' | 'purple' | 'warning' | 'lp' | 'staked';
   hint?: string;
 }) {
   const styles: Record<string, { border: string; bg: string; text: string }> = {
@@ -580,6 +606,7 @@ function StatCard({
     purple: { border: 'border-[#a87cdb]/30', bg: 'bg-[#a87cdb]/5', text: 'text-[#a87cdb]' },
     warning: { border: 'border-amber-500/40', bg: 'bg-amber-500/5', text: 'text-amber-400' },
     lp: { border: 'border-[#9b59b6]/30', bg: 'bg-[#9b59b6]/5', text: 'text-[#9b59b6]' },
+    staked: { border: 'border-orange-400/30', bg: 'bg-orange-400/5', text: 'text-orange-400' },
   };
   const s = styles[variant];
 

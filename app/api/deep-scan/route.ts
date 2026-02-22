@@ -17,6 +17,7 @@ import {
 import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { analyzeHoldings } from '@/lib/holdings-analyzer';
 import { findLPPairs, getLPPositions } from '@/lib/lp-detection';
+import { getStakingPositions, StakingPosition } from '@/lib/staking';
 import { rateLimit, getRateLimitHeaders } from '@/lib/rate-limit';
 import { withOverallTimeout } from '@/lib/fetch-with-timeout';
 
@@ -62,8 +63,10 @@ function buildGraph(
         isGhost: false,
         disposition: null,
         lpBalance: 0,
+        stakedBalance: 0,
         totalHoldings: 0,
         lpPositions: [],
+        stakingPositions: [],
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -91,8 +94,10 @@ function buildGraph(
         isGhost: false,
         disposition: null,
         lpBalance: 0,
+        stakedBalance: 0,
         totalHoldings: 0,
         lpPositions: [],
+        stakingPositions: [],
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -147,11 +152,46 @@ function attachLPToNodes(
     if (positions && positions.length > 0) {
       node.lpPositions = positions;
       node.lpBalance = positions.reduce((s, p) => s + p.userFldShare, 0);
-      node.totalHoldings = (node.balance ?? 0) + node.lpBalance;
-    } else {
-      node.totalHoldings = node.balance ?? 0;
+    }
+    node.totalHoldings = (node.balance ?? 0) + node.lpBalance + node.stakedBalance;
+  }
+}
+
+function attachStakingToNodes(
+  nodes: GraphNode[],
+  stakingPositions: Record<string, StakingPosition[]>
+) {
+  for (const node of nodes) {
+    const positions = stakingPositions[node.id];
+    if (positions && positions.length > 0) {
+      node.stakingPositions = positions.map((p) => ({
+        contractAddress: p.contractAddress,
+        contractLabel: p.contractLabel,
+        stakedAsset: p.stakedAsset,
+        stakedAmount: p.stakedAmount,
+        underlyingFLD: p.underlyingFLD,
+        lpPairAddress: p.lpPairAddress,
+        lpShareOfFLD: p.lpShareOfFLD,
+        sharePercentage: p.sharePercentage,
+      }));
+      node.stakedBalance = positions.reduce((s, p) => s + p.underlyingFLD, 0);
+    }
+    node.totalHoldings = (node.balance ?? 0) + node.lpBalance + node.stakedBalance;
+  }
+}
+
+function buildLPReserves(
+  lpPositions: Record<string, LPPosition[]>
+): Record<string, { fldReserve: number; totalSupply: number }> {
+  const reserves: Record<string, { fldReserve: number; totalSupply: number }> = {};
+  for (const positions of Object.values(lpPositions)) {
+    for (const p of positions) {
+      if (!reserves[p.pairAddress]) {
+        reserves[p.pairAddress] = { fldReserve: p.fldReserve, totalSupply: p.totalSupply };
+      }
     }
   }
+  return reserves;
 }
 
 async function runDeepScan(body: DeepScanBody) {
@@ -195,6 +235,13 @@ async function runDeepScan(body: DeepScanBody) {
   if (lpPairs.length > 0) {
     lpPositions = await getLPPositions(nonContractWallets, tokenAddress, decimals, lpPairs);
     attachLPToNodes(nodes, lpPositions);
+  }
+
+  // ── PHASE 3.7: Check staking positions (token-specific) ──
+  const lpReserves = buildLPReserves(lpPositions);
+  const stakingPositions = await getStakingPositions(nonContractWallets, tokenAddress, decimals, lpReserves);
+  if (Object.keys(stakingPositions).length > 0) {
+    attachStakingToNodes(nodes, stakingPositions);
   }
 
   // ── PHASE 4: Fetch funding sources ──
@@ -275,13 +322,23 @@ async function runDeepScan(body: DeepScanBody) {
 
     // Re-attach LP positions to rebuilt nodes
     if (lpPairs.length > 0) {
-      // Check LP for any new wallets discovered
       const newLPWallets = ghostNewWalletIds.filter((w) => !lpPositions[w]);
       if (newLPWallets.length > 0) {
         const newLP = await getLPPositions(newLPWallets, tokenAddress, decimals, lpPairs);
         Object.assign(lpPositions, newLP);
       }
       attachLPToNodes(nodes, lpPositions);
+    }
+
+    // Re-check staking for new wallets
+    const ghostNewStakingWallets = ghostNewWalletIds.filter((w) => !stakingPositions[w]);
+    if (ghostNewStakingWallets.length > 0) {
+      const updatedReserves = buildLPReserves(lpPositions);
+      const newStaking = await getStakingPositions(ghostNewStakingWallets, tokenAddress, decimals, updatedReserves);
+      Object.assign(stakingPositions, newStaking);
+    }
+    if (Object.keys(stakingPositions).length > 0) {
+      attachStakingToNodes(nodes, stakingPositions);
     }
   }
 
@@ -295,6 +352,7 @@ async function runDeepScan(body: DeepScanBody) {
     fundingSources,
     lpPairs,
     lpPositions,
+    stakingPositions,
   };
 
   const holdingsReport = analyzeHoldings(scanResult, wallet, 'TOKEN', fundingSources);
@@ -362,6 +420,19 @@ async function runDeepScan(body: DeepScanBody) {
       attachLPToNodes(expanded.nodes, lpPositions);
     }
 
+    // Staking positions for expanded nodes
+    const expandedStakingWallets = expanded.nodes
+      .filter((n) => !n.isContract && !stakingPositions[n.id])
+      .map((n) => n.id);
+    if (expandedStakingWallets.length > 0) {
+      const expandedReserves = buildLPReserves(lpPositions);
+      const expandedStaking = await getStakingPositions(expandedStakingWallets, tokenAddress, decimals, expandedReserves);
+      Object.assign(stakingPositions, expandedStaking);
+    }
+    if (Object.keys(stakingPositions).length > 0) {
+      attachStakingToNodes(expanded.nodes, stakingPositions);
+    }
+
     const newWalletsForFunding = newWallets.slice(0, 30);
     if (newWalletsForFunding.length > 0) {
       const newFunding = await fetchFundingSources(newWalletsForFunding);
@@ -377,6 +448,7 @@ async function runDeepScan(body: DeepScanBody) {
       fundingSources,
       lpPairs,
       lpPositions,
+      stakingPositions,
     };
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);

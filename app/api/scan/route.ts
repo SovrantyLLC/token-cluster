@@ -50,8 +50,10 @@ function buildGraph(
         isGhost: false,
         disposition: null,
         lpBalance: 0,
+        stakedBalance: 0,
         totalHoldings: 0,
         lpPositions: [],
+        stakingPositions: [],
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -80,8 +82,10 @@ function buildGraph(
         isGhost: false,
         disposition: null,
         lpBalance: 0,
+        stakedBalance: 0,
         totalHoldings: 0,
         lpPositions: [],
+        stakingPositions: [],
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -207,6 +211,7 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     fundingSources,
     lpPairs: [],
     lpPositions: {},
+    stakingPositions: {},
   };
 }
 

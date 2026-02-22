@@ -34,6 +34,7 @@ const COL = {
   edgeContract: '#a87cdb',
   edgeDefault: '#333847',
   lpPurple: '#9b59b6',
+  stakedOrange: '#e67e22',
 };
 
 const RINGS = [
@@ -124,8 +125,10 @@ function assignLayers(
         isGhost: false,
         disposition: null,
         lpBalance: w.lpBalance ?? 0,
+        stakedBalance: w.stakedBalance ?? 0,
         totalHoldings: w.totalHoldings ?? w.balance,
         lpPositions: [],
+        stakingPositions: [],
       });
       existingIds.add(addr);
     }
@@ -505,6 +508,19 @@ export default function Graph({
       .attr('stroke-dasharray', '2 2')
       .attr('stroke-opacity', 0.6);
 
+    // Orange ring for staked positions (outside LP ring for bullseye effect)
+    nodeEls
+      .filter((d) => d.stakedBalance > 0 && d.layer !== 0)
+      .append('circle')
+      .attr('r', (d) => {
+        const lpOffset = d.lpBalance > 0 ? 4 : 0; // extra offset if LP ring exists
+        return nodeRadius(d) + (d.layer === 1 ? 8 : d.layer === 2 ? 6 : 4) + lpOffset;
+      })
+      .attr('fill', 'none')
+      .attr('stroke', COL.stakedOrange)
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.6);
+
     // main circle
     nodeEls
       .append('circle')
@@ -607,12 +623,22 @@ export default function Graph({
         }
         if (d.lpBalance > 0) {
           html += `<div>In LP: <span style="color:${COL.lpPurple}">${d.lpBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
-          html += `<div>True Total: <span style="color:#fff;font-weight:bold">${d.totalHoldings.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
           if (d.lpPositions && d.lpPositions.length > 0) {
             for (const lp of d.lpPositions) {
               html += `<div style="color:#9ca3af;font-size:10px">&nbsp;&nbsp;${lp.pairLabel}: ${lp.sharePercentage.toFixed(2)}% of pool</div>`;
             }
           }
+        }
+        if (d.stakedBalance > 0) {
+          html += `<div>Staked: <span style="color:${COL.stakedOrange}">${d.stakedBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
+          if (d.stakingPositions && d.stakingPositions.length > 0) {
+            for (const sp of d.stakingPositions) {
+              html += `<div style="color:#9ca3af;font-size:10px">&nbsp;&nbsp;${sp.contractLabel}: ${sp.underlyingFLD.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${tokenSymbol}</div>`;
+            }
+          }
+        }
+        if (d.lpBalance > 0 || d.stakedBalance > 0) {
+          html += `<div style="border-top:1px solid #1a1e2e;margin-top:2px;padding-top:2px">Total: <span style="color:#fff;font-weight:bold">${d.totalHoldings.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
         }
 
         // Show confidence reasons from holdingsReport
@@ -948,6 +974,10 @@ export default function Graph({
             <div className="flex items-center gap-2" title="Purple dashed ring = wallet holds tokens in a liquidity pool">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-dashed" style={{ borderColor: COL.lpPurple, background: 'transparent' }} />
               <span className="text-gray-400">LP Position</span>
+            </div>
+            <div className="flex items-center gap-2" title="Orange ring = wallet has tokens staked in a farm contract">
+              <span className="inline-block w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: COL.stakedOrange, background: 'transparent' }} />
+              <span className="text-gray-400">Staked</span>
             </div>
           </div>
         </>
