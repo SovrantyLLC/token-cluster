@@ -42,8 +42,7 @@ export async function getStakingPositions(
 
   for (const sc of activeContracts) {
     if (sc.balanceMethod.encoding === 'abi-functions') {
-      // Use verified ABI functions (e.g. Ninety1: getStake, pendingRewards)
-      await processAbiFunctionContract(sc, wallets, tokenDecimals, lpReserves, results);
+      await processAbiFunctionContract(sc, wallets, tokenDecimals, lpReserves, results, tokenAddress);
     } else if (sc.balanceMethod.encoding === 'pid' || sc.balanceMethod.encoding === 'simple') {
       // Known method: batch-read directly
       await processKnownContract(sc, wallets, tokenDecimals, lpReserves, results);
@@ -54,6 +53,52 @@ export async function getStakingPositions(
   return results;
 }
 
+/* ── Fetch LP pair reserves directly (for pairs not in discovery) ─────────── */
+
+async function fetchLPReservesDirect(
+  pairAddress: string,
+  tokenAddress: string
+): Promise<{ fldReserve: number; totalSupply: number } | null> {
+  const pairIface = new ethers.Interface([
+    'function token0() view returns (address)',
+    'function getReserves() view returns (uint112, uint112, uint32)',
+    'function totalSupply() view returns (uint256)',
+  ]);
+
+  try {
+    const calls = [
+      { target: pairAddress, allowFailure: true, callData: pairIface.encodeFunctionData('token0', []) },
+      { target: pairAddress, allowFailure: true, callData: pairIface.encodeFunctionData('getReserves', []) },
+      { target: pairAddress, allowFailure: true, callData: pairIface.encodeFunctionData('totalSupply', []) },
+    ];
+
+    const calldata = multicallIface.encodeFunctionData('aggregate3', [calls]);
+    const raw = await provider.call({ to: MULTICALL3_ADDRESS, data: calldata });
+    const decoded = multicallIface.decodeFunctionResult('aggregate3', raw);
+    const responses = decoded[0] as Array<{ success: boolean; returnData: string }>;
+
+    if (!responses[0].success || !responses[1].success || !responses[2].success) return null;
+
+    const token0 = pairIface.decodeFunctionResult('token0', responses[0].returnData)[0] as string;
+    const reserves = pairIface.decodeFunctionResult('getReserves', responses[1].returnData);
+    const totalSupplyRaw = pairIface.decodeFunctionResult('totalSupply', responses[2].returnData)[0] as bigint;
+
+    const r0 = reserves[0] as bigint;
+    const r1 = reserves[1] as bigint;
+    const fldIsToken0 = token0.toLowerCase() === tokenAddress.toLowerCase();
+    const fldReserveRaw = fldIsToken0 ? r0 : r1;
+
+    // FLD has 18 decimals, LP tokens have 18 decimals
+    const fldReserve = Number(fldReserveRaw) / 1e18;
+    const totalSupply = Number(totalSupplyRaw) / 1e18;
+
+    if (totalSupply === 0) return null;
+    return { fldReserve, totalSupply };
+  } catch {
+    return null;
+  }
+}
+
 /* ── ABI-function-based staking (Ninety1) ────────────────────────────────── */
 
 async function processAbiFunctionContract(
@@ -61,18 +106,36 @@ async function processAbiFunctionContract(
   wallets: string[],
   tokenDecimals: number,
   lpReserves: Record<string, { fldReserve: number; totalSupply: number }>,
-  results: Record<string, StakingPosition[]>
+  results: Record<string, StakingPosition[]>,
+  tokenAddress: string
 ) {
   const fn = sc.balanceMethod.abiFunction;
   if (!fn) return;
 
-  const iface = new ethers.Interface([`function ${fn}(address) view returns (uint256)`]);
+  const abiSig = sc.balanceMethod.abiSignature || `function ${fn}(address) view returns (uint256)`;
+  const iface = new ethers.Interface([abiSig]);
+
+  // If this is an LP staking contract and reserves aren't already available, fetch them
+  if (sc.stakedAsset === 'lp-token' && sc.lpPairAddress) {
+    const lpKey = sc.lpPairAddress.toLowerCase();
+    if (!lpReserves[lpKey]) {
+      const directReserves = await fetchLPReservesDirect(sc.lpPairAddress, tokenAddress);
+      if (directReserves) {
+        lpReserves[lpKey] = directReserves;
+      }
+    }
+  }
+
+  // Determine if function takes 2 args: (address, address) — e.g. LPStakes(lpAddr, wallet)
+  const isTwoArgLP = abiSig.includes('(address, address)') && sc.lpPairAddress;
+
   const calls: Array<{ target: string; allowFailure: boolean; callData: string }> = [];
   const callWallets: string[] = [];
 
   for (const wallet of wallets) {
     try {
-      const callData = iface.encodeFunctionData(fn, [wallet]);
+      const args = isTwoArgLP ? [sc.lpPairAddress, wallet] : [wallet];
+      const callData = iface.encodeFunctionData(fn, args);
       calls.push({ target: sc.address, allowFailure: true, callData });
       callWallets.push(wallet.toLowerCase());
     } catch {
@@ -98,10 +161,10 @@ async function processAbiFunctionContract(
 
         try {
           const result = iface.decodeFunctionResult(fn, responses[i].returnData);
-          const rawAmount = result[0] as bigint;
+          const resultIdx = sc.balanceMethod.resultIndex ?? 0;
+          const rawAmount = result[resultIdx] as bigint;
           if (rawAmount === BigInt(0)) continue;
 
-          // Ninety1 stores values as whole tokens (no decimals)
           const decimals = sc.balanceMethod.decimals ?? 0;
           const stakedAmount = Number(rawAmount) / Math.pow(10, decimals);
 

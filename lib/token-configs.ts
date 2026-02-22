@@ -22,6 +22,8 @@ export interface StakingContractConfig {
     decimals?: number;
     /** Function name for abi-functions encoding, e.g. 'getStake' */
     abiFunction?: string;
+    /** Full ABI signature if return type differs from simple uint256 */
+    abiSignature?: string;
   };
   stakedAsset: 'token' | 'lp-token';
   lpPairAddress?: string;
@@ -45,16 +47,50 @@ export function getTokenConfig(tokenAddress: string): TokenConfig | null {
   return TOKEN_CONFIGS[tokenAddress.toLowerCase()] || null;
 }
 
+const NINETY1_STAKING = '0x17427aF0F2E0ed27856C3288Bb902115467e2540';
+
+const NINETY1_LP_PAIRS: Array<{ address: string; label: string }> = [
+  { address: '0xf1840b4ae6dcc58e8dbe514510ffe7737b9acb47', label: 'FLD/AVAX (TraderJoe)' },
+  { address: '0xf129618253bcff0f9a597e8103d2be065d17a310', label: 'EVB/FLD (TraderJoe)' },
+  { address: '0x0dbcb787458fa66ba71b1b808008fee43edac252', label: 'FLD/AVAX (VaporDEX)' },
+  { address: '0x437705f77b5536dade2b3425475b72a0af5f1fe7', label: 'FLD/USDC (VaporDEX)' },
+  { address: '0xe8ef9cc2f20205c5a243efc957a47865e53bfcad', label: 'VAPE/FLD (VaporDEX)' },
+  { address: '0x7c89dc798d832fe979da9bdf2b2eed593f7e5a5b', label: 'wTHT/FLD (VaporDEX)' },
+  { address: '0x6904885d59d891cbc5653092ab011d5e324f5c5c', label: 'FLD/ARENA (VaporDEX)' },
+  { address: '0x3770ee1844d6ec809ad66e060518b18ba07f9ca4', label: 'MYST/FLD (VaporDEX)' },
+  { address: '0xcf55499e13bf758ddb9d40883c1e123ce18c2888', label: 'FATE/FLD (VaporDEX)' },
+  { address: '0x9088b3ae8428e6666b8b82f8079cc74df27e7793', label: 'HIGHER/FLD (VaporDEX)' },
+  { address: '0xa8655fd2afb1adcd37aa8b9b13818471637bb782', label: 'FATE(v1)/FLD (VaporDEX)' },
+];
+
+function buildNinety1LPStakingConfigs(): StakingContractConfig[] {
+  return NINETY1_LP_PAIRS.map((lp) => ({
+    address: NINETY1_STAKING,
+    label: `Ninety1 Staking (${lp.label})`,
+    type: 'custom' as const,
+    balanceMethod: {
+      selector: '0x433f4aef', // LPStakes(address,address)
+      encoding: 'abi-functions' as const,
+      abiFunction: 'LPStakes',
+      abiSignature: 'function LPStakes(address, address) view returns (uint256)',
+      decimals: 18, // LP tokens have 18 decimals
+    },
+    stakedAsset: 'lp-token' as const,
+    lpPairAddress: lp.address,
+  }));
+}
+
 // ═══════════════════════════════════════════════════
 // FLD (FOLD) — Ninety1 / Lab91 Ecosystem
 // ═══════════════════════════════════════════════════
 // Staking contract ABI verified on Snowtrace:
-//   getStake(address) — returns staking "power" as whole tokens (no decimals)
-//   stakedTotal(address) — same value
+//   getStake(address) — returns staking "power" (FLD+FATE boosted, NOT raw FLD)
+//   LPStakes(address lpAddr, address wallet) — VLP tokens staked per LP pair
 //   pendingRewards(address) — claimable FLD rewards (no decimals)
-//   LPStakes(address, address) — LP-specific stakes
-//   deposit(uint256, address) / depositLP(uint256, address) — deposit methods
-// Values are stored as whole FLD tokens (decimals: 0)
+//
+// Flow: FLD + FATE → VaporDEX LP (VLP) → Ninety1 Staking
+// To get actual FLD staked, use LPStakes to get VLP amount, then
+// calculate underlying FLD from LP pair reserves.
 // ═══════════════════════════════════════════════════
 
 TOKEN_CONFIGS['0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f'] = {
@@ -63,20 +99,7 @@ TOKEN_CONFIGS['0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f'] = {
   name: 'Fold',
   decimals: 18,
   chain: 'avax',
-  stakingContracts: [
-    {
-      address: '0x17427aF0F2E0ed27856C3288Bb902115467e2540',
-      label: 'Ninety1 Staking',
-      type: 'custom',
-      balanceMethod: {
-        selector: '0xf5679189', // stakedTotal(address) or getStake(address)
-        encoding: 'abi-functions',
-        abiFunction: 'getStake',
-        decimals: 0, // Ninety1 stores as whole tokens
-      },
-      stakedAsset: 'token', // Combined FLD + FATE staking power in FLD terms
-    },
-  ],
+  stakingContracts: buildNinety1LPStakingConfigs(),
   knownEcosystemContracts: {
     '0x17427af0f2e0ed27856c3288bb902115467e2540': 'Ninety1 Staking',
     '0x86840ea36dd141719003aea81d3630917eb35d8d': 'Twenty6Fifty2',
