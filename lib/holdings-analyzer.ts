@@ -295,6 +295,11 @@ export function reconstructWalletHistory(
       amount: burnedAmount,
       percentage: totalOut > 0 ? (burnedAmount / totalOut) * 100 : 0,
     },
+    addedToLP: {
+      amount: 0,
+      pairs: [],
+      stillActive: false,
+    },
   };
 
   return {
@@ -634,19 +639,27 @@ export function analyzeHoldings(
   scores.sort((a, b) => b.score - a.score);
 
   // Convert to HiddenHoldingWallet
-  const wallets: HiddenHoldingWallet[] = scores.map((s) => ({
-    address: s.address,
-    balance: s.balance,
-    confidence: s.score >= 60 ? 'high' : s.score >= 35 ? 'medium' : 'low',
-    reasons: s.reasons,
-    fundingSource: s.fundingSource,
-    firstInteraction: s.firstInteraction,
-    lastInteraction: s.lastInteraction,
-    transfersWithTarget: s.transfersWithTarget,
-    netFlowFromTarget: s.netFlowFromTarget,
-    tokenOrigin: s.tokenOrigin,
-    tokenOriginDetails: s.tokenOriginDetails,
-  }));
+  const wallets: HiddenHoldingWallet[] = scores.map((s) => {
+    const addr = s.address.toLowerCase();
+    const nodeForAddr = nodes.find((n) => n.id === addr);
+    const lpBal = nodeForAddr?.lpBalance ?? 0;
+    const totalHoldings = s.balance + lpBal;
+    return {
+      address: s.address,
+      balance: s.balance,
+      confidence: s.score >= 60 ? 'high' : s.score >= 35 ? 'medium' : ('low' as const),
+      reasons: s.reasons,
+      fundingSource: s.fundingSource,
+      firstInteraction: s.firstInteraction,
+      lastInteraction: s.lastInteraction,
+      transfersWithTarget: s.transfersWithTarget,
+      netFlowFromTarget: s.netFlowFromTarget,
+      tokenOrigin: s.tokenOrigin,
+      tokenOriginDetails: s.tokenOriginDetails,
+      lpBalance: lpBal,
+      totalHoldings,
+    };
+  });
 
   // Pass-through ghosts inherit confidence of their final recipient
   for (const w of wallets) {
@@ -674,6 +687,12 @@ export function analyzeHoldings(
   const totalHeldByCluster = confirmedHoldings + suspectedHoldings;
   const totalPossibleHidden = possibleHoldings;
 
+  // LP totals
+  const targetNodeLP = targetNode?.lpBalance ?? 0;
+  const clusterLP = [...highWallets, ...medWallets].reduce((s, w) => s + w.lpBalance, 0);
+  const totalInLP = targetNodeLP + clusterLP;
+  const totalTrueHoldings = targetBalance + totalHeldByCluster + totalInLP;
+
   // Build outbound summary
   const outboundSummary = buildOutboundSummary(
     transfers, targetWallet, contractSet, decimals, balances ?? {}
@@ -697,6 +716,8 @@ export function analyzeHoldings(
     targetBalance,
     totalHeldByCluster,
     totalPossibleHidden,
+    totalInLP,
+    totalTrueHoldings,
     wallets,
     clusterSummary,
     riskFlags,
@@ -852,6 +873,15 @@ function generateRiskFlags(
     );
   }
 
+  // LP holdings flag
+  const lpHolders = wallets.filter((w) => w.lpBalance > 0);
+  if (lpHolders.length > 0) {
+    const totalLP = lpHolders.reduce((s, w) => s + w.lpBalance, 0);
+    flags.push(
+      `${lpHolders.length} cluster wallet(s) hold ${fmt(totalLP)} ${tokenSymbol} in LP positions — hidden from simple balance checks`
+    );
+  }
+
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
   let recentAmount = 0;
   let recentCount = 0;
@@ -961,8 +991,15 @@ function generateSummary(
   const totalWallets = highWallets.length + medWallets.length;
   if (totalWallets > 0) {
     const totalEstimate = targetBalance + confirmedHoldings + suspectedHoldings;
+    const lpTotal = [...highWallets, ...medWallets].reduce((s, w) => s + (w.lpBalance ?? 0), 0);
+    if (lpTotal > 0) {
+      parts.push(
+        `LP POSITIONS: ${fmt(lpTotal)} ${tokenSymbol} held in liquidity pools across cluster wallets.`
+      );
+    }
+    const trueTotal = totalEstimate + lpTotal;
     parts.push(
-      `CURRENT ESTIMATED SAME-OWNER HOLDINGS: ${fmt(totalEstimate)} ${tokenSymbol} across ${totalWallets + 1} wallets.`
+      `CURRENT ESTIMATED SAME-OWNER HOLDINGS: ${fmt(trueTotal)} ${tokenSymbol} across ${totalWallets + 1} wallets${lpTotal > 0 ? ' (including LP)' : ''}.`
     );
   } else {
     parts.push('No strong same-owner signals were detected among connected wallets.');

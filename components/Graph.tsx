@@ -33,6 +33,7 @@ const COL = {
   edgeWallet: '#4ea8de',
   edgeContract: '#a87cdb',
   edgeDefault: '#333847',
+  lpPurple: '#9b59b6',
 };
 
 const RINGS = [
@@ -122,6 +123,9 @@ function assignLayers(
         peakDate: null,
         isGhost: false,
         disposition: null,
+        lpBalance: w.lpBalance ?? 0,
+        totalHoldings: w.totalHoldings ?? w.balance,
+        lpPositions: [],
       });
       existingIds.add(addr);
     }
@@ -490,6 +494,17 @@ export default function Graph({
       .attr('stroke-dasharray', '3 3')
       .attr('stroke-opacity', 0.5);
 
+    // Purple ring for LP holders
+    nodeEls
+      .filter((d) => d.lpBalance > 0 && d.layer !== 0)
+      .append('circle')
+      .attr('r', (d) => nodeRadius(d) + (d.layer === 1 ? 8 : d.layer === 2 ? 6 : 4))
+      .attr('fill', 'none')
+      .attr('stroke', COL.lpPurple)
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '2 2')
+      .attr('stroke-opacity', 0.6);
+
     // main circle
     nodeEls
       .append('circle')
@@ -589,6 +604,15 @@ export default function Graph({
         html += ` &nbsp; Out: <span style="color:#e89b3e">${d.volOut.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></div>`;
         if (d.balance !== null) {
           html += `<div>Balance: <span style="color:${COL.high}">${d.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
+        }
+        if (d.lpBalance > 0) {
+          html += `<div>In LP: <span style="color:${COL.lpPurple}">${d.lpBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
+          html += `<div>True Total: <span style="color:#fff;font-weight:bold">${d.totalHoldings.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${tokenSymbol}</span></div>`;
+          if (d.lpPositions && d.lpPositions.length > 0) {
+            for (const lp of d.lpPositions) {
+              html += `<div style="color:#9ca3af;font-size:10px">&nbsp;&nbsp;${lp.pairLabel}: ${lp.sharePercentage.toFixed(2)}% of pool</div>`;
+            }
+          }
         }
 
         // Show confidence reasons from holdingsReport
@@ -920,6 +944,10 @@ export default function Graph({
             <div className="flex items-center gap-2" title="Hollow dashed circle = Ghost wallet (once held tokens, now empty)">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-dashed" style={{ borderColor: 'rgba(232,65,66,0.5)', background: 'transparent' }} />
               <span className="text-gray-400">Ghost (emptied)</span>
+            </div>
+            <div className="flex items-center gap-2" title="Purple dashed ring = wallet holds tokens in a liquidity pool">
+              <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-dashed" style={{ borderColor: COL.lpPurple, background: 'transparent' }} />
+              <span className="text-gray-400">LP Position</span>
             </div>
           </div>
         </>

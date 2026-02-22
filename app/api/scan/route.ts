@@ -49,6 +49,9 @@ function buildGraph(
         peakDate: null,
         isGhost: false,
         disposition: null,
+        lpBalance: 0,
+        totalHoldings: 0,
+        lpPositions: [],
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -76,6 +79,9 @@ function buildGraph(
         peakDate: null,
         isGhost: false,
         disposition: null,
+        lpBalance: 0,
+        totalHoldings: 0,
+        lpPositions: [],
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -199,6 +205,8 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     detectedContracts,
     balances,
     fundingSources,
+    lpPairs: [],
+    lpPositions: {},
   };
 }
 

@@ -17,6 +17,18 @@ export interface TransferTx {
   contractAddress: string;
 }
 
+export interface LPPosition {
+  pairAddress: string;
+  pairLabel: string;
+  lpTokenBalance: number;
+  totalSupply: number;
+  fldReserve: number;
+  userFldShare: number;
+  sharePercentage: number;
+  otherToken: string;
+  otherTokenReserve: number;
+}
+
 export interface GraphNode {
   id: string;
   address: string;
@@ -34,6 +46,9 @@ export interface GraphNode {
   peakDate: number | null;
   isGhost: boolean;
   disposition: DispositionBreakdown | null;
+  lpBalance: number;
+  totalHoldings: number;
+  lpPositions: LPPosition[];
 }
 
 export interface GraphLink {
@@ -51,6 +66,8 @@ export interface ScanResult {
   detectedContracts: string[];
   balances: Record<string, number>;
   fundingSources?: Record<string, string>;
+  lpPairs: string[];
+  lpPositions: Record<string, LPPosition[]>;
 }
 
 export type TokenOrigin = 'from-target' | 'from-dex' | 'from-third-party' | 'mixed' | 'unknown';
@@ -67,6 +84,8 @@ export interface HiddenHoldingWallet {
   netFlowFromTarget: number;
   tokenOrigin: TokenOrigin;
   tokenOriginDetails: string;
+  lpBalance: number;
+  totalHoldings: number;
 }
 
 export interface OutboundSummary {
@@ -81,6 +100,7 @@ export interface DispositionBreakdown {
   sentToWallets: { amount: number; percentage: number; recipients: RecipientDisposition[] };
   sentToContracts: { amount: number; percentage: number };
   burnedOrLost: { amount: number; percentage: number };
+  addedToLP: { amount: number; pairs: string[]; stillActive: boolean };
 }
 
 export interface RecipientDisposition {
@@ -110,6 +130,8 @@ export interface HoldingsReport {
   targetBalance: number;
   totalHeldByCluster: number;
   totalPossibleHidden: number;
+  totalInLP: number;
+  totalTrueHoldings: number;
   wallets: HiddenHoldingWallet[];
   clusterSummary: string;
   riskFlags: string[];

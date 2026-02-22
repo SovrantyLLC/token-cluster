@@ -12,9 +12,11 @@ import {
   TransferTx,
   ScanResult,
   WalletHistory,
+  LPPosition,
 } from '@/lib/types';
 import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { analyzeHoldings } from '@/lib/holdings-analyzer';
+import { findLPPairs, getLPPositions } from '@/lib/lp-detection';
 import { rateLimit, getRateLimitHeaders } from '@/lib/rate-limit';
 import { withOverallTimeout } from '@/lib/fetch-with-timeout';
 
@@ -59,6 +61,9 @@ function buildGraph(
         peakDate: null,
         isGhost: false,
         disposition: null,
+        lpBalance: 0,
+        totalHoldings: 0,
+        lpPositions: [],
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -85,6 +90,9 @@ function buildGraph(
         peakDate: null,
         isGhost: false,
         disposition: null,
+        lpBalance: 0,
+        totalHoldings: 0,
+        lpPositions: [],
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -130,6 +138,22 @@ function deduplicateTransfers(transfers: TransferTx[]): TransferTx[] {
   });
 }
 
+function attachLPToNodes(
+  nodes: GraphNode[],
+  lpPositions: Record<string, LPPosition[]>
+) {
+  for (const node of nodes) {
+    const positions = lpPositions[node.id];
+    if (positions && positions.length > 0) {
+      node.lpPositions = positions;
+      node.lpBalance = positions.reduce((s, p) => s + p.userFldShare, 0);
+      node.totalHoldings = (node.balance ?? 0) + node.lpBalance;
+    } else {
+      node.totalHoldings = node.balance ?? 0;
+    }
+  }
+}
+
 async function runDeepScan(body: DeepScanBody) {
   const { wallet, tokenAddress, limit = 1000 } = body;
   const decimals = body.decimals ?? 18;
@@ -149,6 +173,9 @@ async function runDeepScan(body: DeepScanBody) {
     contractSet.add(addr);
   }
 
+  // ── PHASE 2.5: Discover LP pairs ──
+  const lpPairs = await findLPPairs(tokenAddress);
+
   // ── PHASE 3: Build initial graph + balances ──
   let { nodes, links } = buildGraph(allTransfers, wallet, decimals, contractSet);
 
@@ -163,33 +190,36 @@ async function runDeepScan(body: DeepScanBody) {
     }
   }
 
+  // ── PHASE 3.5: Check LP positions for all non-contract wallets ──
+  let lpPositions: Record<string, LPPosition[]> = {};
+  if (lpPairs.length > 0) {
+    lpPositions = await getLPPositions(nonContractWallets, tokenAddress, decimals, lpPairs);
+    attachLPToNodes(nodes, lpPositions);
+  }
+
   // ── PHASE 4: Fetch funding sources ──
   const walletsToCheck = nonContractWallets.slice(0, 50);
   const fundingSources = await fetchFundingSources(walletsToCheck);
 
   // ── PHASE 4.5: Fetch transfers for ghost wallet detection ──
-  // Without their outbound transfers, reconstructWalletHistory can't see
-  // where zero-balance wallets sent their tokens (DEX sells, wallet sends, etc.)
   const fetchedWallets = new Set<string>([wallet.toLowerCase()]);
 
   const ghostCandidates = nodes
     .filter((n) => {
       if (n.isContract || n.isTarget) return false;
-      return n.volIn > 0; // Received tokens in this scan
+      return n.volIn > 0;
     })
     .sort((a, b) => {
-      // Prioritize zero-balance wallets (ghost candidates) first
       const aZero = (balances[a.id] ?? 0) === 0 ? 0 : 1;
       const bZero = (balances[b.id] ?? 0) === 0 ? 0 : 1;
       if (aZero !== bZero) return aZero - bZero;
-      return b.volIn - a.volIn; // Then by volume received
+      return b.volIn - a.volIn;
     })
     .map((n) => n.id)
     .filter((addr) => !fetchedWallets.has(addr))
     .slice(0, 20);
 
   if (ghostCandidates.length > 0) {
-    // Batch fetch in groups of 3 with 300ms delays
     for (let i = 0; i < ghostCandidates.length; i += 3) {
       const batch = ghostCandidates.slice(i, i + 3);
       const batchResults = await Promise.all(
@@ -208,7 +238,6 @@ async function runDeepScan(body: DeepScanBody) {
 
     allTransfers = deduplicateTransfers(allTransfers);
 
-    // Detect contracts for new addresses
     const ghostExpandedAddrs = new Set<string>();
     for (const tx of allTransfers) {
       ghostExpandedAddrs.add(tx.from.toLowerCase());
@@ -223,12 +252,10 @@ async function runDeepScan(body: DeepScanBody) {
       for (const a of ghostNewAddrs) allAddresses.add(a);
     }
 
-    // Rebuild graph with expanded transfer data
     const rebuilt = buildGraph(allTransfers, wallet, decimals, contractSet);
     nodes = rebuilt.nodes;
     links = rebuilt.links;
 
-    // Fetch balances for new wallets
     const ghostNewWalletIds = nodes
       .filter((n) => !n.isContract && balances[n.id] === undefined)
       .map((n) => n.id);
@@ -245,6 +272,17 @@ async function runDeepScan(body: DeepScanBody) {
         node.balance = balances[node.id];
       }
     }
+
+    // Re-attach LP positions to rebuilt nodes
+    if (lpPairs.length > 0) {
+      // Check LP for any new wallets discovered
+      const newLPWallets = ghostNewWalletIds.filter((w) => !lpPositions[w]);
+      if (newLPWallets.length > 0) {
+        const newLP = await getLPPositions(newLPWallets, tokenAddress, decimals, lpPairs);
+        Object.assign(lpPositions, newLP);
+      }
+      attachLPToNodes(nodes, lpPositions);
+    }
   }
 
   // ── PHASE 5: Run holdings analysis ──
@@ -255,6 +293,8 @@ async function runDeepScan(body: DeepScanBody) {
     detectedContracts,
     balances,
     fundingSources,
+    lpPairs,
+    lpPositions,
   };
 
   const holdingsReport = analyzeHoldings(scanResult, wallet, 'TOKEN', fundingSources);
@@ -310,6 +350,18 @@ async function runDeepScan(body: DeepScanBody) {
       }
     }
 
+    // LP positions for expanded nodes
+    if (lpPairs.length > 0) {
+      const expandedLPWallets = expanded.nodes
+        .filter((n) => !n.isContract && !lpPositions[n.id])
+        .map((n) => n.id);
+      if (expandedLPWallets.length > 0) {
+        const expandedLP = await getLPPositions(expandedLPWallets, tokenAddress, decimals, lpPairs);
+        Object.assign(lpPositions, expandedLP);
+      }
+      attachLPToNodes(expanded.nodes, lpPositions);
+    }
+
     const newWalletsForFunding = newWallets.slice(0, 30);
     if (newWalletsForFunding.length > 0) {
       const newFunding = await fetchFundingSources(newWalletsForFunding);
@@ -323,6 +375,8 @@ async function runDeepScan(body: DeepScanBody) {
       detectedContracts: Array.from(contractSet),
       balances,
       fundingSources,
+      lpPairs,
+      lpPositions,
     };
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);

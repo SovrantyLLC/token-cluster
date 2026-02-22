@@ -125,7 +125,12 @@ function generateMarkdownReport(
   const confirmedH = highW.reduce((s, w) => s + w.balance, 0);
   lines.push(`- HIGH confidence wallets: **${highW.length}** holding **${fmt(confirmedH)} ${tokenSymbol}**`);
   lines.push(`- MEDIUM confidence wallets: **${medW.length}** holding **${fmt(report.totalHeldByCluster - confirmedH)} ${tokenSymbol}**`);
-  lines.push(`- Total estimated same-owner: **${fmt(report.targetBalance + report.totalHeldByCluster)} ${tokenSymbol}**`);
+  if (report.totalInLP > 0) {
+    lines.push(`- In LP positions: **${fmt(report.totalInLP)} ${tokenSymbol}**`);
+    lines.push(`- True total (wallet + LP): **${fmt(report.totalTrueHoldings)} ${tokenSymbol}**`);
+  } else {
+    lines.push(`- Total estimated same-owner: **${fmt(report.targetBalance + report.totalHeldByCluster)} ${tokenSymbol}**`);
+  }
   lines.push('');
 
   // Outbound analysis
@@ -173,7 +178,8 @@ function generateMarkdownReport(
   for (const w of report.wallets) {
     const conf = w.confidence.toUpperCase();
     const origin = w.tokenOrigin !== 'unknown' ? ` [${w.tokenOrigin}]` : '';
-    lines.push(`- **${conf}** \`${w.address}\` — ${fmt(w.balance)} ${tokenSymbol}${origin}`);
+    const lpNote = w.lpBalance > 0 ? ` (+${fmt(w.lpBalance)} in LP)` : '';
+    lines.push(`- **${conf}** \`${w.address}\` — ${fmt(w.balance)} ${tokenSymbol}${lpNote}${origin}`);
     lines.push(`  - ${w.reasons.join(', ')}`);
     if (w.tokenOriginDetails) lines.push(`  - Origin: ${w.tokenOriginDetails}`);
   }
@@ -230,6 +236,8 @@ export default function HoldingsPanel({
     targetBalance,
     totalHeldByCluster,
     totalPossibleHidden,
+    totalInLP,
+    totalTrueHoldings,
     wallets,
     clusterSummary,
     riskFlags,
@@ -284,8 +292,8 @@ export default function HoldingsPanel({
         </div>
       )}
 
-      {/* ── Stat Cards (4 columns) ── */}
-      <div className="grid grid-cols-4 gap-2 px-4 pt-4 pb-3">
+      {/* ── Stat Cards ── */}
+      <div className={`grid gap-2 px-4 pt-4 pb-3 ${totalInLP > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
         <StatCard
           label="TARGET"
           value={fmt(targetBalance)}
@@ -307,12 +315,21 @@ export default function HoldingsPanel({
           variant="green"
           hint="Tokens held in HIGH and MEDIUM confidence wallets — likely same owner"
         />
+        {totalInLP > 0 && (
+          <StatCard
+            label="IN LP"
+            value={fmt(totalInLP)}
+            sub="in liquidity pools"
+            variant="lp"
+            hint="Tokens held inside DEX liquidity pools — hidden from simple balance checks"
+          />
+        )}
         <StatCard
-          label="TOTAL ESTIMATED"
-          value={fmt(totalEstimate)}
-          sub={`across ${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}`}
+          label={totalInLP > 0 ? 'TRUE TOTAL' : 'TOTAL ESTIMATED'}
+          value={fmt(totalInLP > 0 ? totalTrueHoldings : totalEstimate)}
+          sub={`across ${totalWalletCount} wallet${totalWalletCount !== 1 ? 's' : ''}${totalInLP > 0 ? ' + LP' : ''}`}
           variant="accent"
-          hint="Target balance + all cluster wallet balances combined — this person's likely total position"
+          hint={totalInLP > 0 ? 'Target + cluster wallets + LP positions — true total holdings' : 'Target balance + all cluster wallet balances combined'}
         />
       </div>
 
@@ -366,6 +383,11 @@ export default function HoldingsPanel({
                   >
                     {fmt(w.balance)} {tokenSymbol}
                   </span>
+                  {w.lpBalance > 0 && (
+                    <span className="text-[10px] font-mono flex-shrink-0 px-1.5 py-0.5 rounded text-[#9b59b6] bg-[#9b59b6]/10">
+                      +{fmt(w.lpBalance)} LP
+                    </span>
+                  )}
                   {ob.text && (
                     <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${ob.cls}`}>
                       {ob.text}
@@ -548,7 +570,7 @@ function StatCard({
   label: string;
   value: string;
   sub: string;
-  variant?: 'default' | 'accent' | 'green' | 'purple' | 'warning';
+  variant?: 'default' | 'accent' | 'green' | 'purple' | 'warning' | 'lp';
   hint?: string;
 }) {
   const styles: Record<string, { border: string; bg: string; text: string }> = {
@@ -557,6 +579,7 @@ function StatCard({
     green: { border: 'border-emerald-400/30', bg: 'bg-emerald-400/5', text: 'text-emerald-400' },
     purple: { border: 'border-[#a87cdb]/30', bg: 'bg-[#a87cdb]/5', text: 'text-[#a87cdb]' },
     warning: { border: 'border-amber-500/40', bg: 'bg-amber-500/5', text: 'text-amber-400' },
+    lp: { border: 'border-[#9b59b6]/30', bg: 'bg-[#9b59b6]/5', text: 'text-[#9b59b6]' },
   };
   const s = styles[variant];
 
