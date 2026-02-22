@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { GraphNode, GraphLink, TransferTx } from '@/lib/types';
+import { GraphNode, GraphLink, TransferTx, HoldingsReport } from '@/lib/types';
 import { KNOWN_CONTRACTS } from '@/lib/constants';
+import FlowTimeline from './FlowTimeline';
 
 /* ── props ────────────────────────────────── */
 interface AnalysisPanelProps {
@@ -12,13 +13,13 @@ interface AnalysisPanelProps {
   transfers: TransferTx[];
   targetWallet: string;
   tokenSymbol: string;
-  detectedContracts: Set<string>;
+  holdingsReport: HoldingsReport | null;
   onClose: () => void;
 }
 
 /* ── helpers ──────────────────────────────── */
 function abbr(addr: string) {
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  return `${addr.slice(0, 6)}\u2026${addr.slice(-4)}`;
 }
 
 function fmt(n: number, decimals = 2): string {
@@ -47,10 +48,11 @@ const HL = {
   blue: (t: string) => <span className="text-[#4ea8de] font-mono">{t}</span>,
   purple: (t: string) => <span className="text-[#a87cdb]">{t}</span>,
   dim: (t: string) => <span className="text-gray-500">{t}</span>,
+  red: (t: string) => <span className="text-red-400">{t}</span>,
 };
 
-/* ── sort key for balance table ──────────── */
 type SortCol = 'balance' | 'transfers';
+type TabKey = 'report' | 'balances' | 'timeline';
 
 /* ── component ───────────────────────────── */
 export default function AnalysisPanel({
@@ -60,14 +62,15 @@ export default function AnalysisPanel({
   transfers,
   targetWallet,
   tokenSymbol,
-  detectedContracts,
+  holdingsReport,
   onClose,
 }: AnalysisPanelProps) {
-  const [tab, setTab] = useState<'report' | 'balances'>('report');
+  const [tab, setTab] = useState<TabKey>('report');
   const [sortCol, setSortCol] = useState<SortCol>('balance');
   const [sortAsc, setSortAsc] = useState(false);
 
   const target = targetWallet.toLowerCase();
+  const decimals = transfers.length > 0 ? parseInt(transfers[0].tokenDecimal, 10) || 18 : 18;
 
   /* ── derived analytics ── */
   const analysis = useMemo(() => {
@@ -76,7 +79,6 @@ export default function AnalysisPanel({
     const contractNodes = nodes.filter((n) => n.isContract);
     const targetNode = nodes.find((n) => n.id === target);
 
-    // date range
     let minTs = Infinity;
     let maxTs = 0;
     for (const n of nodes) {
@@ -84,11 +86,8 @@ export default function AnalysisPanel({
       if (n.lastSeen > maxTs) maxTs = n.lastSeen;
     }
 
-    // target flow
     let sentVol = 0;
     let recvVol = 0;
-    let sentTo = 0;
-    let recvFrom = 0;
     const sentToSet = new Set<string>();
     const recvFromSet = new Set<string>();
 
@@ -102,12 +101,11 @@ export default function AnalysisPanel({
         recvFromSet.add(l.source);
       }
     }
-    sentTo = sentToSet.size;
-    recvFrom = recvFromSet.size;
+    const sentTo = sentToSet.size;
+    const recvFrom = recvFromSet.size;
     const netFlow = recvVol - sentVol;
     const totalVolume = links.reduce((s, l) => s + l.value, 0);
 
-    // volume breakdown: DEX vs W2W
     let dexVolume = 0;
     let w2wVolume = 0;
     for (const l of links) {
@@ -123,7 +121,6 @@ export default function AnalysisPanel({
     const knownRouterCount = contractNodes.filter((n) => !!KNOWN_CONTRACTS[n.id.toLowerCase()]).length;
     const autoDetectedCount = contractNodes.length - knownRouterCount;
 
-    // holdings
     const holdersChecked = walletNodes.filter((n) => n.balance !== null);
     const holders = walletNodes.filter((n) => n.balance !== null && n.balance > 0);
     const holdersEmpty = walletNodes.filter((n) => n.balance !== null && n.balance === 0);
@@ -131,7 +128,6 @@ export default function AnalysisPanel({
     const targetBalance = targetNode?.balance ?? 0;
     const topHolders = [...holders].sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0)).slice(0, 8);
 
-    // cluster signals
     const bidirectional: GraphNode[] = [];
     const sentPeers = new Set<string>();
     const recvPeers = new Set<string>();
@@ -157,34 +153,14 @@ export default function AnalysisPanel({
     });
 
     return {
-      transferCount,
-      walletNodes,
-      contractNodes,
-      targetNode,
-      minTs,
-      maxTs,
-      sentVol,
-      recvVol,
-      sentTo,
-      recvFrom,
-      netFlow,
-      totalVolume,
-      dexVolume,
-      w2wVolume,
-      knownRouterCount,
-      autoDetectedCount,
-      holdersChecked,
-      holders,
-      holdersEmpty,
-      combinedBalance,
-      targetBalance,
-      topHolders,
-      bidirectional,
-      heavyInteractors,
+      transferCount, walletNodes, contractNodes, targetNode,
+      minTs, maxTs, sentVol, recvVol, sentTo, recvFrom, netFlow, totalVolume,
+      dexVolume, w2wVolume, knownRouterCount, autoDetectedCount,
+      holdersChecked, holders, holdersEmpty, combinedBalance,
+      targetBalance, topHolders, bidirectional, heavyInteractors,
     };
-  }, [nodes, links, transfers, detectedContracts, target]);
+  }, [nodes, links, transfers, target]);
 
-  /* ── sorted balance table ── */
   const sortedBalanceRows = useMemo(() => {
     const rows = nodes.filter((n) => !n.isContract);
     return [...rows].sort((a, b) => {
@@ -192,7 +168,6 @@ export default function AnalysisPanel({
       if (sortCol === 'balance') {
         const ba = a.balance ?? -1;
         const bb = b.balance ?? -1;
-        // holders first always
         if (ba > 0 && bb <= 0) return -1;
         if (bb > 0 && ba <= 0) return 1;
         cmp = ba - bb;
@@ -204,18 +179,20 @@ export default function AnalysisPanel({
   }, [nodes, sortCol, sortAsc]);
 
   function toggleSort(col: SortCol) {
-    if (sortCol === col) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortCol(col);
-      setSortAsc(false);
-    }
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(false); }
   }
 
   const sortArrow = (col: SortCol) => {
     if (sortCol !== col) return '';
     return sortAsc ? ' \u25B2' : ' \u25BC';
   };
+
+  const TABS: { key: TabKey; label: string }[] = [
+    { key: 'report', label: 'Report' },
+    { key: 'balances', label: 'Balance Sheet' },
+    { key: 'timeline', label: 'Timeline' },
+  ];
 
   return (
     <div
@@ -228,26 +205,19 @@ export default function AnalysisPanel({
           className="flex items-center flex-shrink-0 border-b border-raised/40"
           style={{ background: '#0c0e16' }}
         >
-          <button
-            onClick={() => setTab('report')}
-            className={`px-4 py-2 text-[11px] font-mono uppercase tracking-wider transition-colors ${
-              tab === 'report'
-                ? 'text-[#c9a227] border-b-2 border-[#c9a227]'
-                : 'text-gray-500 hover:text-gray-300'
-            }`}
-          >
-            Report
-          </button>
-          <button
-            onClick={() => setTab('balances')}
-            className={`px-4 py-2 text-[11px] font-mono uppercase tracking-wider transition-colors ${
-              tab === 'balances'
-                ? 'text-[#c9a227] border-b-2 border-[#c9a227]'
-                : 'text-gray-500 hover:text-gray-300'
-            }`}
-          >
-            Balance Sheet
-          </button>
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-2 text-[11px] font-mono uppercase tracking-wider transition-colors ${
+                tab === t.key
+                  ? 'text-[#c9a227] border-b-2 border-[#c9a227]'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
           <div className="flex-1" />
           <button
             onClick={onClose}
@@ -258,10 +228,7 @@ export default function AnalysisPanel({
         </div>
 
         {/* ── body ── */}
-        <div
-          className="flex-1 overflow-y-auto"
-          style={{ background: '#0c0e16' }}
-        >
+        <div className="flex-1 overflow-y-auto min-h-0" style={{ background: '#0c0e16' }}>
           {nodes.length === 0 ? (
             <div
               className="flex items-center justify-center h-full text-gray-600 font-mono text-xs"
@@ -270,7 +237,14 @@ export default function AnalysisPanel({
               Run a scan to generate analysis
             </div>
           ) : tab === 'report' ? (
-            <ReportTab a={analysis} target={target} sym={tokenSymbol} />
+            <ReportTab a={analysis} target={target} sym={tokenSymbol} holdingsReport={holdingsReport} />
+          ) : tab === 'timeline' ? (
+            <FlowTimeline
+              transfers={transfers}
+              targetWallet={targetWallet}
+              tokenSymbol={tokenSymbol}
+              decimals={decimals}
+            />
           ) : (
             <BalanceTable
               rows={sortedBalanceRows}
@@ -320,10 +294,12 @@ function ReportTab({
   a,
   target,
   sym,
+  holdingsReport,
 }: {
   a: Analysis;
   target: string;
   sym: string;
+  holdingsReport: HoldingsReport | null;
 }) {
   const {
     transferCount, walletNodes, contractNodes, minTs, maxTs,
@@ -332,6 +308,8 @@ function ReportTab({
     holdersChecked, holders, holdersEmpty, combinedBalance,
     targetBalance, topHolders, bidirectional, heavyInteractors,
   } = a;
+
+  const outbound = holdingsReport?.outboundSummary;
 
   return (
     <div className="p-4 space-y-4 text-[12px] leading-relaxed" style={{ background: '#0c0e16' }}>
@@ -359,7 +337,7 @@ function ReportTab({
           Found {HL.accent(String(walletNodes.length))} wallets (EOA)
           and {HL.purple(String(contractNodes.length))} contracts/routers
           ({HL.purple(String(knownRouterCount))} known DEX routers + {HL.purple(String(autoDetectedCount))} auto-detected)
-          across activity from {HL.dim(minTs === Infinity ? '—' : fmtDate(minTs))} to {HL.dim(maxTs === 0 ? '—' : fmtDate(maxTs))}.
+          across activity from {HL.dim(minTs === Infinity ? '\u2014' : fmtDate(minTs))} to {HL.dim(maxTs === 0 ? '\u2014' : fmtDate(maxTs))}.
         </p>
       </section>
 
@@ -371,13 +349,52 @@ function ReportTab({
         <p className="text-gray-300">
           Target sent {HL.accent(fmt(sentVol))} {sym} to {HL.accent(String(sentTo))} wallets
           and received {HL.green(fmt(recvVol))} {sym} from {HL.accent(String(recvFrom))} wallets.
-          Net flow: {netFlow >= 0 ? HL.green(`+${fmt(netFlow)}`) : HL.accent(fmt(netFlow))} {sym}{' '}
+          Net flow: {netFlow >= 0 ? HL.green(`+${fmt(netFlow)}`) : HL.red(fmt(netFlow))} {sym}{' '}
           ({netFlow >= 0 ? 'net accumulator' : 'net distributor'}).
           Total volume: {HL.accent(fmt(totalVolume))} {sym}.
         </p>
       </section>
 
-      {/* C. Volume Breakdown */}
+      {/* C. Outbound Analysis (new) */}
+      {outbound && (outbound.toDex.amount > 0 || outbound.toWallets.amount > 0) && (
+        <section style={{ background: '#0c0e16' }}>
+          <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
+            Outbound Analysis — Where Did Tokens Go?
+          </h3>
+          <div className="space-y-1">
+            <p className="text-gray-300">
+              {HL.purple(`Sold on DEX: ${fmt(outbound.toDex.amount)} ${sym}`)} ({outbound.toDex.percentage.toFixed(1)}% of outbound) — liquidated via contract interactions.
+            </p>
+            <p className="text-gray-300">
+              {HL.accent(`Sent to wallets: ${fmt(outbound.toWallets.amount)} ${sym}`)} ({outbound.toWallets.percentage.toFixed(1)}% of outbound) — transferred to other addresses.
+            </p>
+          </div>
+
+          {outbound.topRecipients.length > 0 && (
+            <div className="mt-2">
+              <p className="text-gray-400 mb-1 text-[11px]">
+                Top recipients of wallet-to-wallet transfers:
+              </p>
+              <div className="space-y-0.5">
+                {outbound.topRecipients.slice(0, 6).map((r) => (
+                  <div key={r.address} className="flex items-center gap-2 font-mono text-[11px]">
+                    <span className="text-gray-600">{'\u2192'}</span>
+                    <span className="text-[#4ea8de]">{abbr(r.address)}</span>
+                    <span className="text-gray-400">received {fmt(r.amount)} {sym}</span>
+                    {r.stillHolding > 0 ? (
+                      <span className="text-emerald-400">still holds {fmt(r.stillHolding)}</span>
+                    ) : (
+                      <span className="text-gray-600">holds 0</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* D. Volume Breakdown */}
       <section style={{ background: '#0c0e16' }}>
         <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
           Volume Breakdown
@@ -390,12 +407,9 @@ function ReportTab({
           Wallet-to-wallet volume: {HL.accent(fmt(w2wVolume))} {sym} ({pct(w2wVolume, totalVolume)} of total)
           — direct transfers between EOA wallets only.
         </p>
-        <p className="text-gray-300 mt-1">
-          Contracts identified: {HL.purple(String(knownRouterCount))} known routers + {HL.purple(String(autoDetectedCount))} auto-detected {HL.dim('(via bytecode check)')}.
-        </p>
       </section>
 
-      {/* D. Current Holdings */}
+      {/* E. Current Holdings */}
       <section style={{ background: '#0c0e16' }}>
         <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
           Current Holdings — Who Still Has {sym}?
@@ -408,18 +422,29 @@ function ReportTab({
         </p>
         {topHolders.length > 0 && (
           <div className="mt-2 space-y-0.5">
-            {topHolders.map((h, i) => (
-              <div key={h.id} className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-gray-600 w-4 text-right">{i + 1}.</span>
-                <span className="text-[#4ea8de]">{abbr(h.address)}</span>
-                <span className="text-emerald-400">{fmt(h.balance ?? 0, 4)} {sym}</span>
-              </div>
-            ))}
+            {topHolders.map((h, i) => {
+              // Show token origin info if available from holdingsReport
+              const wallet = holdingsReport?.wallets.find(
+                (w) => w.address.toLowerCase() === h.id
+              );
+              return (
+                <div key={h.id} className="flex items-center gap-2 font-mono text-[11px]">
+                  <span className="text-gray-600 w-4 text-right">{i + 1}.</span>
+                  <span className="text-[#4ea8de]">{abbr(h.address)}</span>
+                  <span className="text-emerald-400">{fmt(h.balance ?? 0, 4)} {sym}</span>
+                  {wallet && (
+                    <span className="text-gray-600 text-[10px] truncate max-w-[200px]">
+                      {wallet.tokenOriginDetails}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
 
-      {/* E. Cluster Signals */}
+      {/* F. Cluster Signals */}
       <section style={{ background: '#0c0e16' }}>
         <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
           Cluster Signals
@@ -428,7 +453,7 @@ function ReportTab({
         {bidirectional.length > 0 ? (
           <div className="mb-2">
             <p className="text-gray-300 mb-1">
-              {HL.accent(String(bidirectional.length))} bidirectional transfer{bidirectional.length !== 1 ? 's' : ''} {HL.dim('(sent AND received — strongest same-owner indicator)')}:
+              {HL.accent(String(bidirectional.length))} bidirectional transfer{bidirectional.length !== 1 ? 's' : ''} {HL.dim('(sent AND received \u2014 strongest same-owner indicator)')}:
             </p>
             <div className="space-y-0.5">
               {bidirectional.map((n) => (
@@ -500,6 +525,7 @@ function BalanceTable({
             >
               Transfers{sortArrow('transfers')}
             </th>
+            <th className="text-right py-2 pr-3">Net Pos</th>
             <th
               className="text-right py-2 cursor-pointer hover:text-gray-300 transition-colors select-none"
               onClick={() => onSort('balance')}
@@ -512,6 +538,10 @@ function BalanceTable({
           {rows.map((node) => {
             const isHolder = node.balance !== null && node.balance > 0;
             const isTarget = node.id === target;
+            const netPos = node.netPosition;
+            // Flag: netPosition significantly different from balance
+            const hasMismatch = netPos !== null && node.balance !== null && node.balance > 0
+              && Math.abs(netPos - node.balance) > node.balance * 0.2;
             return (
               <tr
                 key={node.id}
@@ -539,10 +569,22 @@ function BalanceTable({
                 <td className="py-1.5 pr-3 text-right text-gray-400">
                   {node.txCount}
                 </td>
+                <td
+                  className={`py-1.5 pr-3 text-right ${
+                    hasMismatch ? 'text-amber-400' : 'text-gray-600'
+                  }`}
+                  title={hasMismatch
+                    ? `Net position (${netPos !== null ? fmt(netPos) : '?'}) differs from balance (${fmt(node.balance ?? 0)}) — may have acquired/sold tokens outside this scan`
+                    : `Net: volIn - volOut from scan data`
+                  }
+                >
+                  {netPos !== null ? fmt(netPos) : '\u2014'}
+                  {hasMismatch && ' *'}
+                </td>
                 <td className={`py-1.5 text-right ${isHolder ? 'text-emerald-400' : 'text-gray-600'}`}>
                   {node.balance !== null
                     ? node.balance.toLocaleString(undefined, { maximumFractionDigits: 4 })
-                    : '—'}
+                    : '\u2014'}
                 </td>
               </tr>
             );

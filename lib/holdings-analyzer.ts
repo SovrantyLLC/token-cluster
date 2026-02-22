@@ -1,4 +1,13 @@
-import { ScanResult, TransferTx, GraphNode, GraphLink, HiddenHoldingWallet, HoldingsReport } from './types';
+import {
+  ScanResult,
+  TransferTx,
+  GraphNode,
+  GraphLink,
+  HiddenHoldingWallet,
+  HoldingsReport,
+  OutboundSummary,
+  TokenOrigin,
+} from './types';
 
 interface WalletScore {
   address: string;
@@ -10,6 +19,8 @@ interface WalletScore {
   transfersWithTarget: number;
   netFlowFromTarget: number;
   balance: number;
+  tokenOrigin: TokenOrigin;
+  tokenOriginDetails: string;
 }
 
 function abbr(addr: string): string {
@@ -22,6 +33,170 @@ function fmt(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function fmtDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/* ── Token Origin Tracing ──────────────────────────────────────────────────── */
+
+function traceTokenOrigin(
+  walletAddr: string,
+  target: string,
+  transfers: TransferTx[],
+  contractSet: Set<string>,
+  decimals: number
+): { origin: TokenOrigin; details: string } {
+  const addr = walletAddr.toLowerCase();
+
+  // Find all incoming transfers TO this wallet
+  const incoming = transfers.filter((tx) => tx.to.toLowerCase() === addr);
+  if (incoming.length === 0) return { origin: 'unknown', details: 'No incoming transfers found in scan data' };
+
+  let fromTarget = 0;
+  let fromDex = 0;
+  let fromThirdParty = 0;
+  let largestSource = '';
+  let largestAmount = 0;
+  let largestTs = 0;
+
+  for (const tx of incoming) {
+    const from = tx.from.toLowerCase();
+    const value = parseFloat(tx.value) / Math.pow(10, decimals);
+
+    if (from === target) {
+      fromTarget += value;
+    } else if (contractSet.has(from)) {
+      fromDex += value;
+    } else {
+      fromThirdParty += value;
+    }
+
+    if (value > largestAmount) {
+      largestAmount = value;
+      largestSource = from;
+      largestTs = parseInt(tx.timeStamp, 10);
+    }
+  }
+
+  const total = fromTarget + fromDex + fromThirdParty;
+  if (total === 0) return { origin: 'unknown', details: 'Zero-value transfers only' };
+
+  const targetPct = fromTarget / total;
+  const dexPct = fromDex / total;
+  const thirdPct = fromThirdParty / total;
+
+  let origin: TokenOrigin;
+  let details: string;
+
+  if (targetPct >= 0.7) {
+    origin = 'from-target';
+    details = `Received ${fmt(fromTarget)} directly from target`;
+    if (largestTs > 0) details += ` (largest: ${fmt(largestAmount)} on ${fmtDate(largestTs)})`;
+  } else if (dexPct >= 0.7) {
+    origin = 'from-dex';
+    details = `Acquired ${fmt(fromDex)} from DEX/contracts — likely independent buyer`;
+  } else if (thirdPct >= 0.7) {
+    origin = 'from-third-party';
+    // Check if the third party is also connected to the target
+    const thirdPartyConnected = transfers.some(
+      (tx) =>
+        (tx.from.toLowerCase() === largestSource && tx.to.toLowerCase() === target) ||
+        (tx.to.toLowerCase() === largestSource && tx.from.toLowerCase() === target)
+    );
+    if (thirdPartyConnected) {
+      details = `Received from ${abbr(largestSource)} (also connected to target) — intermediary pattern`;
+    } else {
+      details = `Received from third-party ${abbr(largestSource)}`;
+    }
+  } else {
+    origin = 'mixed';
+    const parts: string[] = [];
+    if (fromTarget > 0) parts.push(`${fmt(fromTarget)} from target`);
+    if (fromDex > 0) parts.push(`${fmt(fromDex)} from DEX`);
+    if (fromThirdParty > 0) parts.push(`${fmt(fromThirdParty)} from other wallets`);
+    details = `Mixed sources: ${parts.join(', ')}`;
+  }
+
+  return { origin, details };
+}
+
+/* ── Outbound Summary ──────────────────────────────────────────────────────── */
+
+export function buildOutboundSummary(
+  transfers: TransferTx[],
+  targetWallet: string,
+  contractSet: Set<string>,
+  decimals: number,
+  balances: Record<string, number>
+): OutboundSummary {
+  const target = targetWallet.toLowerCase();
+
+  let toDexAmount = 0;
+  let toDexCount = 0;
+  let toWalletAmount = 0;
+  let toWalletCount = 0;
+  const toContractAmount = 0;
+  const toContractCount = 0;
+
+  const recipientAmounts = new Map<string, number>();
+
+  for (const tx of transfers) {
+    if (tx.from.toLowerCase() !== target) continue;
+    const to = tx.to.toLowerCase();
+    const value = parseFloat(tx.value) / Math.pow(10, decimals);
+
+    // Known DEX routers are contracts too
+    if (contractSet.has(to)) {
+      // Distinguish between known DEX routers and other contracts
+      // For simplicity, all contracts are "dex/contract" but DEX routers are the main ones
+      toDexAmount += value;
+      toDexCount++;
+    } else {
+      toWalletAmount += value;
+      toWalletCount++;
+      recipientAmounts.set(to, (recipientAmounts.get(to) || 0) + value);
+    }
+  }
+
+  // "Other contracts" category for non-DEX contracts (we lump them all as "DEX" for now)
+  // Split: DEX is contracts, "other contracts" is reserved for future use
+  const totalOut = toDexAmount + toWalletAmount + toContractAmount;
+
+  const topRecipients = Array.from(recipientAmounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([addr, amount]) => ({
+      address: addr,
+      amount,
+      stillHolding: balances[addr] ?? 0,
+    }));
+
+  return {
+    toDex: {
+      amount: toDexAmount,
+      percentage: totalOut > 0 ? (toDexAmount / totalOut) * 100 : 0,
+      txCount: toDexCount,
+    },
+    toWallets: {
+      amount: toWalletAmount,
+      percentage: totalOut > 0 ? (toWalletAmount / totalOut) * 100 : 0,
+      txCount: toWalletCount,
+    },
+    toContracts: {
+      amount: toContractAmount,
+      percentage: totalOut > 0 ? (toContractAmount / totalOut) * 100 : 0,
+      txCount: toContractCount,
+    },
+    topRecipients,
+  };
+}
+
+/* ── Main Analysis ─────────────────────────────────────────────────────────── */
+
 export function analyzeHoldings(
   scanResult: ScanResult,
   targetWallet: string,
@@ -29,7 +204,13 @@ export function analyzeHoldings(
   fundingSources: Record<string, string>
 ): HoldingsReport {
   const target = targetWallet.toLowerCase();
-  const { nodes, links, transfers } = scanResult;
+  const { nodes, links, transfers, balances, detectedContracts } = scanResult;
+
+  // Build contract set
+  const contractSet = new Set(detectedContracts);
+
+  // Get decimals from first transfer if available
+  const decimals = transfers.length > 0 ? parseInt(transfers[0].tokenDecimal, 10) || 18 : 18;
 
   // Get target balance
   const targetNode = nodes.find((n) => n.id === target);
@@ -55,8 +236,8 @@ export function analyzeHoldings(
   }
 
   // Build link lookup: target -> peer and peer -> target
-  const sentToMap = new Map<string, GraphLink>(); // target sent to peer
-  const recvFromMap = new Map<string, GraphLink>(); // target received from peer
+  const sentToMap = new Map<string, GraphLink>();
+  const recvFromMap = new Map<string, GraphLink>();
   for (const l of links) {
     const src = typeof l.source === 'string' ? l.source : l.source;
     const tgt = typeof l.target === 'string' ? l.target : l.target;
@@ -69,7 +250,7 @@ export function analyzeHoldings(
     .filter((tx) => tx.from.toLowerCase() === target)
     .sort((a, b) => parseInt(a.timeStamp, 10) - parseInt(b.timeStamp, 10));
 
-  // Detect sequential sends (consecutive txs from target to different wallets)
+  // Detect sequential sends
   const sequentialGroups = detectSequentialSends(targetSentTxs, target);
   const sequentialWallets = new Set<string>();
   for (const group of sequentialGroups) {
@@ -84,7 +265,6 @@ export function analyzeHoldings(
     fundingClusters.get(funderLower)!.push(wallet.toLowerCase());
   }
 
-  // Find the target's funding source
   const targetFundingSource = fundingSources[target] ?? null;
 
   // Score each wallet
@@ -114,6 +294,15 @@ export function analyzeHoldings(
     const recvFromTarget = sentLink?.value ?? 0;
     const netFlowFromTarget = recvFromTarget - sentToTarget;
 
+    // ── Token Origin Tracing ──
+    const { origin: tokenOrigin, details: tokenOriginDetails } = traceTokenOrigin(
+      addr,
+      target,
+      transfers,
+      contractSet,
+      decimals
+    );
+
     // ── HEURISTIC 1: Bidirectional Transfers (30 points) ──
     if (sentLink && recvLink) {
       score += 30;
@@ -128,11 +317,9 @@ export function analyzeHoldings(
         reasons.push(`Shared funding source: ${abbr(walletFundingSource)}`);
       }
     }
-    // Also check if this wallet shares funding with OTHER wallets in the cluster
     if (walletFundingSource) {
       const cluster = fundingClusters.get(walletFundingSource.toLowerCase());
       if (cluster && cluster.length >= 2) {
-        // Multiple wallets funded by same source (even if not the target's funder)
         if (!reasons.some((r) => r.includes('Shared funding'))) {
           score += 20;
           reasons.push(`Shared gas funder with ${cluster.length - 1} other wallet(s)`);
@@ -166,6 +353,30 @@ export function analyzeHoldings(
       reasons.push('No token activity with anyone else');
     }
 
+    // ── HEURISTIC 7: Token Origin Bonus/Penalty (up to +20 / -30) ──
+    if (tokenOrigin === 'from-target' && node.balance !== null && node.balance > 0) {
+      score += 20;
+      reasons.push('Tokens received directly from target and held');
+    } else if (tokenOrigin === 'from-dex') {
+      score -= 30;
+      reasons.push('Tokens acquired from DEX — likely independent buyer');
+    } else if (tokenOrigin === 'from-third-party') {
+      // Check if third party is also connected to target (intermediary pattern)
+      const thirdPartyConnected = transfers.some(
+        (tx) =>
+          (tx.from.toLowerCase() === addr || tx.to.toLowerCase() === addr) &&
+          transfers.some(
+            (tx2) =>
+              tx2.hash !== tx.hash &&
+              (tx2.from.toLowerCase() === target || tx2.to.toLowerCase() === target)
+          )
+      );
+      if (thirdPartyConnected) {
+        score += 15;
+        reasons.push('Received via intermediary connected to target');
+      }
+    }
+
     if (score >= 15) {
       scores.push({
         address: node.address,
@@ -177,6 +388,8 @@ export function analyzeHoldings(
         transfersWithTarget,
         netFlowFromTarget,
         balance: node.balance ?? 0,
+        tokenOrigin,
+        tokenOriginDetails,
       });
     }
   }
@@ -195,6 +408,8 @@ export function analyzeHoldings(
     lastInteraction: s.lastInteraction,
     transfersWithTarget: s.transfersWithTarget,
     netFlowFromTarget: s.netFlowFromTarget,
+    tokenOrigin: s.tokenOrigin,
+    tokenOriginDetails: s.tokenOriginDetails,
   }));
 
   // Calculate totals
@@ -208,6 +423,15 @@ export function analyzeHoldings(
 
   const totalHeldByCluster = confirmedHoldings + suspectedHoldings;
   const totalPossibleHidden = possibleHoldings;
+
+  // Build outbound summary
+  const outboundSummary = buildOutboundSummary(
+    transfers,
+    targetWallet,
+    contractSet,
+    decimals,
+    balances ?? {}
+  );
 
   // Generate risk flags
   const riskFlags = generateRiskFlags(
@@ -227,7 +451,8 @@ export function analyzeHoldings(
     lowWallets,
     confirmedHoldings,
     suspectedHoldings,
-    tokenSymbol
+    tokenSymbol,
+    outboundSummary
   );
 
   return {
@@ -238,8 +463,11 @@ export function analyzeHoldings(
     wallets,
     clusterSummary,
     riskFlags,
+    outboundSummary,
   };
 }
+
+/* ── Helper Functions ──────────────────────────────────────────────────────── */
 
 function detectSequentialSends(
   sortedTargetSentTxs: TransferTx[],
@@ -256,10 +484,6 @@ function detectSequentialSends(
     if (to === target) continue;
 
     if (lastTs > 0 && ts - lastTs < 120) {
-      // Within 2 minutes — likely same batch
-      if (currentGroup.length === 0 && lastTs > 0) {
-        // Add the previous wallet too
-      }
       if (!currentGroup.includes(to)) currentGroup.push(to);
     } else {
       if (currentGroup.length >= 2) groups.push([...currentGroup]);
@@ -282,7 +506,6 @@ function checkTimingCorrelation(peerTxs: TransferTx[], target: string): number {
   let rapidPairs = 0;
   for (let i = 1; i < sorted.length; i++) {
     const diff = parseInt(sorted[i].timeStamp, 10) - parseInt(sorted[i - 1].timeStamp, 10);
-    // Check if the pair is a send-then-receive or receive-then-send within 5 min
     const prev = sorted[i - 1];
     const curr = sorted[i];
     const prevDir = prev.from.toLowerCase() === target ? 'sent' : 'received';
@@ -324,7 +547,6 @@ function generateRiskFlags(
 ): string[] {
   const flags: string[] = [];
 
-  // Sequential send detection
   for (const group of sequentialGroups) {
     if (group.length >= 2) {
       flags.push(
@@ -334,7 +556,6 @@ function generateRiskFlags(
     }
   }
 
-  // Wash trading (bidirectional)
   const bidirWallets = wallets.filter((w) =>
     w.reasons.some((r) => r.includes('Bidirectional'))
   );
@@ -348,7 +569,6 @@ function generateRiskFlags(
     );
   }
 
-  // Cold storage
   const coldWallets = wallets.filter(
     (w) =>
       w.balance > 0 &&
@@ -360,7 +580,6 @@ function generateRiskFlags(
     );
   }
 
-  // Shared funding
   const fcEntries = Array.from(fundingClusters.entries());
   for (let fi = 0; fi < fcEntries.length; fi++) {
     const funder = fcEntries[fi][0];
@@ -373,7 +592,15 @@ function generateRiskFlags(
     }
   }
 
-  // Recent dispersal (last 7 days)
+  // DEX buyers flag
+  const dexBuyers = wallets.filter((w) => w.tokenOrigin === 'from-dex');
+  if (dexBuyers.length > 0) {
+    const dexTotal = dexBuyers.reduce((s, w) => s + w.balance, 0);
+    flags.push(
+      `${dexBuyers.length} wallet(s) acquired ${fmt(dexTotal)} ${tokenSymbol} from DEX — likely independent buyers`
+    );
+  }
+
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
   let recentAmount = 0;
   let recentCount = 0;
@@ -400,50 +627,66 @@ function generateSummary(
   lowWallets: HiddenHoldingWallet[],
   confirmedHoldings: number,
   suspectedHoldings: number,
-  tokenSymbol: string
+  tokenSymbol: string,
+  outbound: OutboundSummary
 ): string {
-  const totalWallets = highWallets.length + medWallets.length;
-  const totalEstimate = targetBalance + confirmedHoldings + suspectedHoldings;
+  const parts: string[] = [];
 
-  let summary = `Target wallet holds ${fmt(targetBalance)} ${tokenSymbol} directly.`;
+  // Target status
+  if (targetBalance === 0) {
+    parts.push(`Target wallet: EMPTIED (0 ${tokenSymbol}).`);
+  } else {
+    parts.push(`Target wallet holds ${fmt(targetBalance)} ${tokenSymbol} directly.`);
+  }
 
+  // Outbound analysis
+  const totalOut = outbound.toDex.amount + outbound.toWallets.amount + outbound.toContracts.amount;
+  if (totalOut > 0) {
+    const dexPct = outbound.toDex.percentage.toFixed(1);
+    const walletPct = outbound.toWallets.percentage.toFixed(1);
+    parts.push(
+      `Sent ${fmt(totalOut)} ${tokenSymbol} total: ${fmt(outbound.toDex.amount)} (${dexPct}%) to DEX/contracts, ${fmt(outbound.toWallets.amount)} (${walletPct}%) to wallets.`
+    );
+  }
+
+  // HIGH confidence
   if (highWallets.length > 0) {
-    const sharedFundingWallets = highWallets.filter((w) =>
-      w.reasons.some((r) => r.includes('funding'))
+    const fromTarget = highWallets.filter((w) => w.tokenOrigin === 'from-target');
+    parts.push(
+      `HIGH confidence: ${highWallets.length} wallet(s) holding ${fmt(confirmedHoldings)} ${tokenSymbol}.`
     );
-    const bidirWallets = highWallets.filter((w) =>
-      w.reasons.some((r) => r.includes('Bidirectional'))
-    );
-
-    summary += ` Analysis identified ${highWallets.length} additional wallet(s) likely belonging to the same person, holding a combined ${fmt(confirmedHoldings)} ${tokenSymbol}.`;
-
-    const signals: string[] = [];
-    if (sharedFundingWallets.length > 0) {
-      const funder = sharedFundingWallets[0].fundingSource;
-      signals.push(`shared funding source from ${funder ? abbr(funder) : 'unknown'}`);
+    if (fromTarget.length > 0) {
+      parts.push(
+        `${fromTarget.length} received tokens directly from target.`
+      );
     }
-    if (bidirWallets.length > 0) {
-      signals.push('bidirectional transfers');
-    }
-    if (signals.length > 0) {
-      summary += ` ${highWallets.length} wallet(s) are HIGH confidence (${signals.join(', ')}).`;
-    }
-
-    summary += ` Total estimated holdings: ${fmt(totalEstimate)} ${tokenSymbol} across ${totalWallets + 1} wallets.`;
   }
 
+  // MEDIUM confidence
   if (medWallets.length > 0) {
-    summary += ` ${medWallets.length} additional wallet(s) (MEDIUM confidence) hold ${fmt(suspectedHoldings)} ${tokenSymbol} and may also belong to this person.`;
+    parts.push(
+      `MEDIUM confidence: ${medWallets.length} wallet(s) holding ${fmt(suspectedHoldings)} ${tokenSymbol}.`
+    );
   }
 
+  // LOW
   if (lowWallets.length > 0) {
     const lowTotal = lowWallets.reduce((s, w) => s + w.balance, 0);
-    summary += ` ${lowWallets.length} wallet(s) (LOW confidence) hold ${fmt(lowTotal)} ${tokenSymbol} with weaker signals.`;
+    parts.push(
+      `LOW confidence: ${lowWallets.length} wallet(s) holding ${fmt(lowTotal)} ${tokenSymbol}.`
+    );
   }
 
-  if (highWallets.length === 0 && medWallets.length === 0) {
-    summary += ' No strong same-owner signals were detected among connected wallets.';
+  // Total estimate
+  const totalWallets = highWallets.length + medWallets.length;
+  if (totalWallets > 0) {
+    const totalEstimate = targetBalance + confirmedHoldings + suspectedHoldings;
+    parts.push(
+      `Estimated same-owner holdings: ${fmt(totalEstimate)} ${tokenSymbol} across ${totalWallets + 1} wallets.`
+    );
+  } else {
+    parts.push('No strong same-owner signals were detected among connected wallets.');
   }
 
-  return summary;
+  return parts.join(' ');
 }

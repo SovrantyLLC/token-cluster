@@ -288,6 +288,7 @@ export default function Dashboard() {
                   <HoldingsPanel
                     report={holdingsReport}
                     tokenSymbol={currentToken.symbol}
+                    scanResult={scanResult}
                     onWalletClick={(addr) => setTargetWallet(addr)}
                   />
                 </div>
@@ -303,7 +304,7 @@ export default function Dashboard() {
               transfers={scanResult.transfers}
               targetWallet={targetWallet}
               tokenSymbol={currentToken.symbol}
-              detectedContracts={detectedContracts}
+              holdingsReport={holdingsReport}
               onClose={() => setShowAnalysis(false)}
             />
           )}

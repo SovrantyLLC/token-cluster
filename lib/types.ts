@@ -27,6 +27,7 @@ export interface GraphNode {
   volIn: number;
   volOut: number;
   balance: number | null;
+  netPosition: number | null;
   firstSeen: number;
   lastSeen: number;
 }
@@ -48,6 +49,8 @@ export interface ScanResult {
   fundingSources?: Record<string, string>;
 }
 
+export type TokenOrigin = 'from-target' | 'from-dex' | 'from-third-party' | 'mixed' | 'unknown';
+
 export interface HiddenHoldingWallet {
   address: string;
   balance: number;
@@ -58,6 +61,15 @@ export interface HiddenHoldingWallet {
   lastInteraction: number;
   transfersWithTarget: number;
   netFlowFromTarget: number;
+  tokenOrigin: TokenOrigin;
+  tokenOriginDetails: string;
+}
+
+export interface OutboundSummary {
+  toDex: { amount: number; percentage: number; txCount: number };
+  toWallets: { amount: number; percentage: number; txCount: number };
+  toContracts: { amount: number; percentage: number; txCount: number };
+  topRecipients: { address: string; amount: number; stillHolding: number }[];
 }
 
 export interface HoldingsReport {
@@ -68,4 +80,5 @@ export interface HoldingsReport {
   wallets: HiddenHoldingWallet[];
   clusterSummary: string;
   riskFlags: string[];
+  outboundSummary: OutboundSummary;
 }

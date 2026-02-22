@@ -115,6 +115,7 @@ function assignLayers(
         volIn: Math.max(0, w.netFlowFromTarget),
         volOut: Math.max(0, -w.netFlowFromTarget),
         balance: w.balance,
+        netPosition: w.netFlowFromTarget,
         firstSeen: w.firstInteraction,
         lastSeen: w.lastInteraction,
       });

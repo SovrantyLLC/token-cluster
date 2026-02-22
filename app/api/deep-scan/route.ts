@@ -51,6 +51,7 @@ function buildGraph(
         volIn: 0,
         volOut: 0,
         balance: null,
+        netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
       });
@@ -72,6 +73,7 @@ function buildGraph(
         volIn: 0,
         volOut: 0,
         balance: null,
+        netPosition: null,
         firstSeen: ts,
         lastSeen: ts,
       });
@@ -97,8 +99,14 @@ function buildGraph(
     link.txCount++;
   }
 
+  // Calculate net position for each node
+  const allNodes = Array.from(nodeMap.values());
+  for (const node of allNodes) {
+    node.netPosition = node.volIn - node.volOut;
+  }
+
   return {
-    nodes: Array.from(nodeMap.values()),
+    nodes: allNodes,
     links: Array.from(linkMap.values()),
   };
 }
