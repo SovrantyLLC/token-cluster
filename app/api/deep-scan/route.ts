@@ -150,7 +150,7 @@ async function runDeepScan(body: DeepScanBody) {
   }
 
   // ── PHASE 3: Build initial graph + balances ──
-  const { nodes, links } = buildGraph(allTransfers, wallet, decimals, contractSet);
+  let { nodes, links } = buildGraph(allTransfers, wallet, decimals, contractSet);
 
   const nonContractWallets = nodes
     .filter((n) => !n.isContract)
@@ -167,6 +167,86 @@ async function runDeepScan(body: DeepScanBody) {
   const walletsToCheck = nonContractWallets.slice(0, 50);
   const fundingSources = await fetchFundingSources(walletsToCheck);
 
+  // ── PHASE 4.5: Fetch transfers for ghost wallet detection ──
+  // Without their outbound transfers, reconstructWalletHistory can't see
+  // where zero-balance wallets sent their tokens (DEX sells, wallet sends, etc.)
+  const fetchedWallets = new Set<string>([wallet.toLowerCase()]);
+
+  const ghostCandidates = nodes
+    .filter((n) => {
+      if (n.isContract || n.isTarget) return false;
+      return n.volIn > 0; // Received tokens in this scan
+    })
+    .sort((a, b) => {
+      // Prioritize zero-balance wallets (ghost candidates) first
+      const aZero = (balances[a.id] ?? 0) === 0 ? 0 : 1;
+      const bZero = (balances[b.id] ?? 0) === 0 ? 0 : 1;
+      if (aZero !== bZero) return aZero - bZero;
+      return b.volIn - a.volIn; // Then by volume received
+    })
+    .map((n) => n.id)
+    .filter((addr) => !fetchedWallets.has(addr))
+    .slice(0, 20);
+
+  if (ghostCandidates.length > 0) {
+    // Batch fetch in groups of 3 with 300ms delays
+    for (let i = 0; i < ghostCandidates.length; i += 3) {
+      const batch = ghostCandidates.slice(i, i + 3);
+      const batchResults = await Promise.all(
+        batch.map((addr) =>
+          fetchTokenTransfers(addr, tokenAddress, Math.floor(limit / 2))
+        )
+      );
+      for (const txs of batchResults) {
+        allTransfers = allTransfers.concat(txs);
+      }
+      for (const addr of batch) fetchedWallets.add(addr);
+      if (i + 3 < ghostCandidates.length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+
+    allTransfers = deduplicateTransfers(allTransfers);
+
+    // Detect contracts for new addresses
+    const ghostExpandedAddrs = new Set<string>();
+    for (const tx of allTransfers) {
+      ghostExpandedAddrs.add(tx.from.toLowerCase());
+      ghostExpandedAddrs.add(tx.to.toLowerCase());
+    }
+    const ghostNewAddrs = Array.from(ghostExpandedAddrs).filter(
+      (a) => !allAddresses.has(a)
+    );
+    if (ghostNewAddrs.length > 0) {
+      const ghostNewContracts = await detectContracts(ghostNewAddrs);
+      for (const c of ghostNewContracts) contractSet.add(c);
+      for (const a of ghostNewAddrs) allAddresses.add(a);
+    }
+
+    // Rebuild graph with expanded transfer data
+    const rebuilt = buildGraph(allTransfers, wallet, decimals, contractSet);
+    nodes = rebuilt.nodes;
+    links = rebuilt.links;
+
+    // Fetch balances for new wallets
+    const ghostNewWalletIds = nodes
+      .filter((n) => !n.isContract && balances[n.id] === undefined)
+      .map((n) => n.id);
+    if (ghostNewWalletIds.length > 0) {
+      const ghostNewBals = await getTokenBalanceBatch(
+        ghostNewWalletIds,
+        tokenAddress,
+        decimals
+      );
+      Object.assign(balances, ghostNewBals);
+    }
+    for (const node of nodes) {
+      if (balances[node.id] !== undefined) {
+        node.balance = balances[node.id];
+      }
+    }
+  }
+
   // ── PHASE 5: Run holdings analysis ──
   const scanResult: ScanResult = {
     nodes,
@@ -181,11 +261,12 @@ async function runDeepScan(body: DeepScanBody) {
 
   // ── PHASE 6: Recursive scan for HIGH confidence wallets (2-hop) ──
   const highWallets = holdingsReport.wallets.filter((w) => w.confidence === 'high');
+  const recursiveTargets = highWallets
+    .slice(0, 5)
+    .map((w) => w.address.toLowerCase())
+    .filter((addr) => !fetchedWallets.has(addr));
 
-  if (highWallets.length > 0) {
-    const recursiveTargets = highWallets
-      .slice(0, 5)
-      .map((w) => w.address.toLowerCase());
+  if (recursiveTargets.length > 0) {
 
     const secondaryTransfers = await Promise.all(
       recursiveTargets.map((addr) =>
