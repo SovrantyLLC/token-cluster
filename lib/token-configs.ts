@@ -16,13 +16,14 @@ export interface StakingContractConfig {
   type: 'masterchef' | 'single-stake' | 'gauge' | 'custom';
   balanceMethod: {
     selector: string;
-    encoding: 'simple' | 'pid';
+    encoding: 'simple' | 'pid' | 'auto-detect';
     pid?: number;
     resultIndex?: number;
     decimals?: number;
   };
   stakedAsset: 'token' | 'lp-token';
   lpPairAddress?: string;
+  depositEventSignature?: string;
 }
 
 export interface TokenConfig {
@@ -33,6 +34,7 @@ export interface TokenConfig {
   chain: 'avax';
   stakingContracts: StakingContractConfig[];
   knownEcosystemContracts: Record<string, string>;
+  knownLPPairs: Record<string, string>;
 }
 
 const TOKEN_CONFIGS: Record<string, TokenConfig> = {};
@@ -42,20 +44,13 @@ export function getTokenConfig(tokenAddress: string): TokenConfig | null {
 }
 
 // ═══════════════════════════════════════════════════
-// FLD (FOLD) — Lab91 Ecosystem
+// FLD (FOLD) — Ninety1 / Lab91 Ecosystem
 // ═══════════════════════════════════════════════════
-// TO COMPLETE THIS CONFIG:
-// 1. Find the Lab91 staking/farm contract address on Snowscan
-//    Look for the contract that users deposit FLD/AVAX LP tokens into
-// 2. Check the contract's read functions to find the balance method:
-//    - MasterChef-style: usually userInfo(pid, address)
-//    - Simple staking: usually balanceOf(address) or stakedAmount(address)
-// 3. Find the pool ID (pid) for the FLD/AVAX pool (usually 0 or 1)
-// 4. Find the FLD/AVAX LP pair contract address
-//    - Go to TraderJoe, look at the FLD/AVAX pool info
-//    - Or call getPair on the TraderJoe factory
-// 5. Replace all TODO addresses below with real addresses
-// 6. Test by checking a wallet known to be staking FLD on Lab91
+// Staking flow: FLD → LP (VaporDEX) → VLP token → staked in Ninety1 contract
+// Deposit method: depositLP(uint256 _amount, address _lpAddress)
+// Deposit event: Deposit(address user, uint256 amount, address recipient)
+//   topic0: 0xe31c7b8d08ee7db0afa68782e1028ef92305caeea8626633ad44d413e30f6b2f
+// Read method: auto-detected at runtime by probing the staking contract
 // ═══════════════════════════════════════════════════
 
 TOKEN_CONFIGS['0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f'] = {
@@ -66,36 +61,33 @@ TOKEN_CONFIGS['0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f'] = {
   chain: 'avax',
   stakingContracts: [
     {
-      // TODO: Replace with actual Lab91 staking contract address
-      address: '0xTODO_LAB91_FLD_AVAX_FARM',
-      label: 'Lab91 FLD/AVAX Farm',
-      type: 'masterchef',
+      address: '0x17427aF0F2E0ed27856C3288Bb902115467e2540',
+      label: 'Ninety1 Staking',
+      type: 'custom',
       balanceMethod: {
-        // MasterChef-style: userInfo(uint256 pid, address user) returns (uint256 amount, ...)
-        // TODO: Confirm the actual function signature on the Lab91 contract
-        selector: '0x93f1a40b', // userInfo(uint256,address)
-        encoding: 'pid',
-        pid: 0, // TODO: Confirm FLD/AVAX pool ID
-        resultIndex: 0,
+        // Read method is auto-detected at runtime by probing the contract.
+        // The deposit function is depositLP(uint256, address).
+        // The probe tries: balanceOf, userInfo, getUserInfo, deposited, stakedBalance
+        selector: 'auto-detect',
+        encoding: 'auto-detect',
       },
       stakedAsset: 'lp-token',
-      lpPairAddress: '0xTODO_FLD_AVAX_LP_PAIR', // TODO: the TraderJoe or Pangolin FLD/AVAX pair
+      lpPairAddress: '0xcf55499E13bF758Ddb9D40883c1e123cE18c2888', // VaporDEX VLP (FLD/FATE)
+      depositEventSignature: '0xe31c7b8d08ee7db0afa68782e1028ef92305caeea8626633ad44d413e30f6b2f',
     },
-    // Add more staking pools here if Lab91 has multiple farms
-    // {
-    //   address: '0xTODO_LAB91_SINGLE_STAKE',
-    //   label: 'Lab91 FLD Single Stake',
-    //   type: 'single-stake',
-    //   balanceMethod: {
-    //     selector: '0x70a08231',  // standard balanceOf(address)
-    //     encoding: 'simple',
-    //   },
-    //   stakedAsset: 'token',
-    // },
   ],
   knownEcosystemContracts: {
-    // TODO: Add Lab91 ecosystem contract addresses
-    // '0xTODO': 'Lab91 Rewards Distributor',
-    // '0xTODO': 'Lab91 Treasury',
+    '0x17427af0f2e0ed27856c3288bb902115467e2540': 'Ninety1 Staking',
+    '0x8f1f74e9cad296f99a6f36a56e1f3afb45571cc9': 'Ninety1 NFT (ERC1155)',
+    '0x32f0c28be6a6ac5d3b471278b77f6971a3141348': 'FATE Token',
+    '0xebe2eae72d6eaa44a3bca32cfdf81d3a687917c2': 'EVB Token',
+    '0xcf55499e13bf758ddb9d40883c1e123ce18c2888': 'VaporDEX VLP',
+  },
+  knownLPPairs: {
+    '0xf1840b4ae6dcc58e8dbe514510ffe7737b9acb47': 'FLD/WAVAX (TraderJoe V2)',
+    '0x0dbcb787458fa66ba71b1b808008fee43edac252': 'FLD/WAVAX (VaporDEX)',
+    '0x437705f77b5536dade2b3425475b72a0af5f1fe7': 'FLD/USDC',
+    '0xcf55499e13bf758ddb9d40883c1e123ce18c2888': 'FLD/FATE (VaporDEX)',
+    '0x3770ee1844d6ec809ad66e060518b18ba07f9ca4': 'MYST/FLD',
   },
 };
