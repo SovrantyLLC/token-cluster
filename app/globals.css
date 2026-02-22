@@ -3,25 +3,47 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --void: #06070b;
+  --deep: #0c0e16;
+  --surface: #131620;
+  --raised: #1a1e2e;
+  --gold: #c9a227;
+  --gold-dim: #a68520;
+  --gold-glow: rgba(201, 162, 39, 0.15);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--raised) var(--deep);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--void);
+  color: #d1d5db;
+  font-family: var(--font-outfit), system-ui, sans-serif;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+code, pre, .mono {
+  font-family: var(--font-dm-mono), 'Courier New', monospace;
+}
+
+::selection {
+  background: var(--gold);
+  color: var(--void);
+}
+
+/* Custom scrollbar for Webkit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--deep);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--raised);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #252a3d;
 }

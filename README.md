@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Token Cluster Visualizer
 
-## Getting Started
+AVAX C-Chain token transfer analysis tool. Maps wallet interactions for any ERC-20 token and identifies wallet clusters belonging to the same entity.
 
-First, run the development server:
+## Features
+
+- ERC-20 token transfer graph visualization (D3 force-directed)
+- Live balance checking via Multicall3 (batch RPC)
+- Auto-detection of contracts vs EOA wallets
+- Wallet-to-Wallet mode (strips DEX/contract noise)
+- Written cluster analysis report
+- Token search/lookup by contract address
+- **Deep Scan**: Hidden holdings detection — identifies wallets likely owned by the same person using 6 heuristics (bidirectional transfers, shared funding sources, timing correlation, sequential nonces, received-then-held, isolated wallets)
+
+## Default Configuration
+
+- Token: FLD (Fold) — 0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f
+- Target: 0xae13476C006Bf6409735FB1c7b253AA82a555Ff3
+- Chain: Avalanche C-Chain (43114)
+
+## Local Development
 
 ```bash
+git clone https://github.com/SovrantyLLC/token-cluster.git
+cd token-cluster
+cp .env.example .env.local
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Deployment (Railway)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Fork or clone this repo
+2. Connect to Railway: `railway link`
+3. Set environment variables in Railway dashboard:
+   - `AVAX_RPC_URL=https://api.avax.network/ext/bc/C/rpc`
+   - `ROUTESCAN_API=https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api`
+   - `SNOWSCAN_API=https://api.snowscan.xyz/api`
+4. Deploy: `railway up` or push to main branch (auto-deploys)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Railway will auto-detect Next.js and build with Nixpacks.
 
-## Learn More
+## API Endpoints
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Route | Method | Rate Limit | Description |
+|-------|--------|------------|-------------|
+| `/api/scan` | POST | 30/min | Standard token transfer scan |
+| `/api/deep-scan` | POST | 30/min | Deep scan with hidden holdings analysis |
+| `/api/balance` | POST | 60/min | Batch token balance check |
+| `/api/token-lookup` | POST | 60/min | ERC-20 token metadata lookup |
+| `/api/detect-contracts` | POST | 60/min | Contract vs EOA detection |
+| `/api/funding-source` | POST | 30/min | First AVAX funding source lookup |
+| `/api/health` | GET | — | Service health check |
