@@ -52,46 +52,6 @@ function SnowtraceLink({ address }: { address: string }) {
   );
 }
 
-/* ── toggle sub-component ──────────────────── */
-function Toggle({
-  on,
-  onToggle,
-  label,
-  hint,
-}: {
-  on: boolean;
-  onToggle: (v: boolean) => void;
-  label: string;
-  hint: string;
-}) {
-  return (
-    <label className="flex items-start gap-2.5 cursor-pointer select-none group">
-      <div
-        onClick={() => onToggle(!on)}
-        className={`mt-0.5 w-8 h-[18px] rounded-full relative transition-colors flex-shrink-0 ${
-          on ? 'bg-gold' : 'bg-raised'
-        }`}
-      >
-        <div
-          className={`absolute top-[3px] w-3 h-3 rounded-full transition-transform ${
-            on ? 'translate-x-[14px] bg-void' : 'translate-x-[3px] bg-gray-500'
-          }`}
-        />
-      </div>
-      <div className="flex flex-col min-w-0">
-        <span
-          className={`text-xs leading-tight transition-colors ${
-            on ? 'text-gray-200' : 'text-gray-400'
-          }`}
-        >
-          {label}
-        </span>
-        <span className="text-[10px] text-gray-600 leading-tight">{hint}</span>
-      </div>
-    </label>
-  );
-}
-
 /* ── skeleton row ──────────────────────────── */
 function SkeletonRow() {
   return (
@@ -120,15 +80,11 @@ interface SidebarProps {
   nodes: GraphNode[];
   isScanning: boolean;
   activeFilter: string;
-  w2wMode: boolean;
-  hideLPs: boolean;
   onTokenChange: () => void;
   onWalletChange: (addr: string) => void;
   onScan: (wallet: string, depth: number, limit: number) => void;
   onDeepScan?: (wallet: string, depth: number, limit: number) => void;
   onFilterChange: (filter: string) => void;
-  onW2WToggle: (on: boolean) => void;
-  onLPToggle: (on: boolean) => void;
   onWalletClick: (addr: string) => void;
 }
 
@@ -139,15 +95,11 @@ export default function Sidebar({
   nodes,
   isScanning,
   activeFilter,
-  w2wMode,
-  hideLPs,
   onTokenChange,
   onWalletChange,
   onScan,
   onDeepScan,
   onFilterChange,
-  onW2WToggle,
-  onLPToggle,
   onWalletClick,
 }: SidebarProps) {
   const [localWallet, setLocalWallet] = useState(targetWallet);
@@ -315,26 +267,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* ═══ 3. VIEW MODE ═══ */}
-      <div className="flex-shrink-0 px-4 pt-3 pb-3 border-b border-raised/30 flex flex-col gap-2.5">
-        <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider">
-          View Mode
-        </span>
-        <Toggle
-          on={w2wMode}
-          onToggle={onW2WToggle}
-          label="Wallet-to-Wallet Only"
-          hint="Hide DEX routers and contracts"
-        />
-        <Toggle
-          on={hideLPs}
-          onToggle={onLPToggle}
-          label="Hide LP Pools"
-          hint="Auto-detected via on-chain bytecode"
-        />
-      </div>
-
-      {/* ═══ 4. FILTERS ═══ */}
+      {/* ═══ 3. FILTERS ═══ */}
       <div className="flex-shrink-0 px-4 pt-3 pb-3 border-b border-raised/30">
         <span className="text-[10px] text-gray-500 font-mono uppercase tracking-wider block mb-2">
           Filter

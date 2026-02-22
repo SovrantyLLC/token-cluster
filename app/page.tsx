@@ -32,14 +32,13 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanPhase, setScanPhase] = useState('');
   const [activeFilter, setActiveFilter] = useState<string>('all');
-  const [w2wMode, setW2wMode] = useState(false);
-  const [hideLPs, setHideLPs] = useState(true);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [error, setError] = useState('');
   const [holdingsReport, setHoldingsReport] = useState<HoldingsReport | null>(null);
   const [isDeepScan, setIsDeepScan] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState<Set<number>>(new Set([0, 1, 2, 3, 4]));
+  const [showHoldings, setShowHoldings] = useState(false);
 
   /* ── regular scan ── */
   const handleScan = useCallback(
@@ -153,9 +152,6 @@ export default function Dashboard() {
     if (!scanResult) return { filteredNodes: [], filteredLinks: [] };
 
     const nodes = scanResult.nodes.filter((n) => {
-      if (hideLPs && n.isContract && !n.isTarget) return false;
-      if (w2wMode && n.isContract && !n.isTarget) return false;
-
       if (!n.isTarget) {
         if (activeFilter === 'sent' && n.volOut <= 0) return false;
         if (activeFilter === 'received' && n.volIn <= 0) return false;
@@ -171,7 +167,7 @@ export default function Dashboard() {
     );
 
     return { filteredNodes: nodes, filteredLinks: lnks };
-  }, [scanResult, activeFilter, w2wMode, hideLPs]);
+  }, [scanResult, activeFilter]);
 
   /* ── all nodes/links for graph (graph handles layer filtering internally) ── */
   const allNodes = scanResult?.nodes ?? [];
@@ -267,20 +263,20 @@ export default function Dashboard() {
           nodes={filteredNodes}
           isScanning={isScanning}
           activeFilter={activeFilter}
-          w2wMode={w2wMode}
-          hideLPs={hideLPs}
           onTokenChange={() => setShowTokenModal(true)}
           onWalletChange={setTargetWallet}
           onScan={handleScan}
           onDeepScan={handleDeepScan}
           onFilterChange={setActiveFilter}
-          onW2WToggle={setW2wMode}
-          onLPToggle={setHideLPs}
           onWalletClick={() => {}}
         />
 
         <main className="flex-1 flex flex-col min-w-0" style={{ background: '#06070b' }}>
-          <div className="flex-1 p-2 min-h-0">
+          {/* Graph: takes remaining space (60% when holdings open, 100% when closed) */}
+          <div
+            className="p-2 min-h-0 transition-all duration-300"
+            style={{ flex: holdingsReport && showHoldings ? '0 0 60%' : '1 1 100%' }}
+          >
             <Graph
               nodes={allNodes}
               links={allLinks}
@@ -294,12 +290,53 @@ export default function Dashboard() {
             />
           </div>
 
+          {/* Holdings drawer: collapsed tab at bottom, expands to 40% */}
           {holdingsReport && (
-            <HoldingsPanel
-              report={holdingsReport}
-              tokenSymbol={currentToken.symbol}
-              onWalletClick={(addr) => setTargetWallet(addr)}
-            />
+            <div
+              className="flex flex-col border-t border-raised/50 transition-all duration-300 overflow-hidden"
+              style={{
+                flex: showHoldings ? '0 0 40%' : '0 0 auto',
+                background: '#0c0e16',
+              }}
+            >
+              {/* Toggle tab */}
+              <button
+                onClick={() => setShowHoldings(!showHoldings)}
+                className="flex items-center justify-between px-4 py-2 hover:bg-raised/30 transition-colors cursor-pointer flex-shrink-0"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+                    style={{ background: 'rgba(80,200,120,0.15)', color: '#50c878' }}
+                  >
+                    HOLDINGS
+                  </span>
+                  <span className="text-xs font-mono text-[#c9a227]">
+                    ~{fmt(holdingsReport.targetBalance + holdingsReport.totalHeldByCluster)} {currentToken.symbol}
+                  </span>
+                  <span className="text-[10px] font-mono text-gray-500">
+                    across {holdingsReport.wallets.filter((w) => w.confidence === 'high').length + 1} wallets
+                  </span>
+                </div>
+                <span
+                  className="text-gray-500 text-xs transition-transform duration-300"
+                  style={{ transform: showHoldings ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                >
+                  ▲
+                </span>
+              </button>
+
+              {/* Scrollable report content */}
+              {showHoldings && (
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  <HoldingsPanel
+                    report={holdingsReport}
+                    tokenSymbol={currentToken.symbol}
+                    onWalletClick={(addr) => setTargetWallet(addr)}
+                  />
+                </div>
+              )}
+            </div>
           )}
 
           {showAnalysis && scanResult && (

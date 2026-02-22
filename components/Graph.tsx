@@ -86,21 +86,45 @@ function assignLayers(
   holdingsReport: HoldingsReport | null,
   detectedContracts: Set<string>
 ): LayeredNode[] {
-  const highAddrs = new Set(
-    holdingsReport?.wallets
-      .filter((w) => w.confidence === 'high')
-      .map((w) => w.address.toLowerCase()) || []
-  );
-  const medAddrs = new Set(
-    holdingsReport?.wallets
-      .filter((w) => w.confidence === 'medium')
-      .map((w) => w.address.toLowerCase()) || []
-  );
+  const highWallets = holdingsReport?.wallets.filter((w) => w.confidence === 'high') ?? [];
+  const medWallets = holdingsReport?.wallets.filter((w) => w.confidence === 'medium') ?? [];
+
+  const highAddrs = new Set(highWallets.map((w) => w.address.toLowerCase()));
+  const medAddrs = new Set(medWallets.map((w) => w.address.toLowerCase()));
+
   const contractAddrs = new Set(Array.from(detectedContracts));
   const knownKeys = Object.keys(KNOWN_CONTRACTS);
   for (let i = 0; i < knownKeys.length; i++) contractAddrs.add(knownKeys[i]);
 
-  return nodes.map((n) => {
+  // Build set of existing node IDs
+  const existingIds = new Set(nodes.map((n) => n.id));
+
+  // Ensure holdings wallets exist as nodes even if missing from scan graph
+  const extraNodes: GraphNode[] = [];
+  const allHoldingsWallets = holdingsReport?.wallets ?? [];
+  for (const w of allHoldingsWallets) {
+    const addr = w.address.toLowerCase();
+    if (!existingIds.has(addr)) {
+      extraNodes.push({
+        id: addr,
+        address: w.address,
+        isTarget: false,
+        isContract: false,
+        label: null,
+        txCount: w.transfersWithTarget,
+        volIn: Math.max(0, w.netFlowFromTarget),
+        volOut: Math.max(0, -w.netFlowFromTarget),
+        balance: w.balance,
+        firstSeen: w.firstInteraction,
+        lastSeen: w.lastInteraction,
+      });
+      existingIds.add(addr);
+    }
+  }
+
+  const allNodes = [...nodes, ...extraNodes];
+
+  return allNodes.map((n) => {
     let layer = 3;
     if (n.id === targetWallet.toLowerCase()) layer = 0;
     else if (highAddrs.has(n.id)) layer = 1;
@@ -161,9 +185,15 @@ function nodeColor(n: LayeredNode): string {
   }
 }
 
+function resolveId(ref: unknown): string {
+  if (typeof ref === 'string') return ref;
+  if (ref && typeof ref === 'object' && 'id' in ref) return (ref as { id: string }).id;
+  return '';
+}
+
 function edgeColor(l: GraphLink, target: string, nodeLayerMap: Map<string, number>): { color: string; opacity: number; width: number } {
-  const src = l.source;
-  const tgt = l.target;
+  const src = resolveId(l.source);
+  const tgt = resolveId(l.target);
   const isTargetEdge = src === target || tgt === target;
   const peer = src === target ? tgt : tgt === target ? src : null;
   const peerLayer = peer ? (nodeLayerMap.get(peer) ?? 3) : 3;
@@ -272,10 +302,21 @@ export default function Graph({
     const nodeLayerMap = new Map<string, number>();
     for (const n of layeredNodes) nodeLayerMap.set(n.id, n.layer);
 
+    // Debug: log layer counts
+    const layerCounts = [0, 0, 0, 0, 0];
+    for (const n of layeredNodes) layerCounts[n.layer]++;
+    console.log('[Graph] Layer assignment:', { total: layeredNodes.length, target: layerCounts[0], high: layerCounts[1], med: layerCounts[2], wallets: layerCounts[3], contracts: layerCounts[4] });
+    if (holdingsReport) {
+      const hrHigh = holdingsReport.wallets.filter((w) => w.confidence === 'high');
+      const hrMed = holdingsReport.wallets.filter((w) => w.confidence === 'medium');
+      console.log('[Graph] HoldingsReport wallets:', { high: hrHigh.length, med: hrMed.length, highAddrs: hrHigh.map((w) => w.address.toLowerCase()), sample_node_ids: layeredNodes.slice(0, 5).map((n) => n.id) });
+    }
+
     /* ── filter by visible layers ── */
     const visNodes = layeredNodes.filter((n) => visibleLayers.has(n.layer));
     const visIds = new Set(visNodes.map((n) => n.id));
     const visLinks = links.filter((l) => visIds.has(l.source) && visIds.has(l.target));
+    console.log('[Graph] Visible:', { layers: Array.from(visibleLayers), nodes: visNodes.length, links: visLinks.length });
 
     /* ── defs ── */
     const defs = svg.append('defs');
@@ -562,8 +603,8 @@ export default function Graph({
       const connectedIds = new Set<string>();
       connectedIds.add(d.id);
       for (const l of simLinks) {
-        const src = typeof l.source === 'string' ? l.source : (l.source as SimNode).id;
-        const tgt = typeof l.target === 'string' ? l.target : (l.target as SimNode).id;
+        const src = resolveId(l.source);
+        const tgt = resolveId(l.target);
         if (src === d.id) connectedIds.add(tgt);
         if (tgt === d.id) connectedIds.add(src);
       }

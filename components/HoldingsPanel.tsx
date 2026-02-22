@@ -73,29 +73,7 @@ export default function HoldingsPanel({
   const totalWalletCount = wallets.filter((w) => w.confidence === 'high' || w.confidence === 'medium').length + 1;
 
   return (
-    <div
-      className="flex-shrink-0 border-t border-raised/50 overflow-hidden"
-      style={{ background: '#0c0e16' }}
-    >
-      <div className="flex flex-col" style={{ maxHeight: 480 }}>
-        {/* ── Header ── */}
-        <div
-          className="flex items-center justify-between px-4 py-2.5 border-b border-raised/40 flex-shrink-0"
-          style={{ background: '#0c0e16' }}
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold font-mono text-[#c9a227]">
-              HIDDEN HOLDINGS REPORT
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-gray-500">
-              {wallets.length} wallet(s) flagged
-            </span>
-          </div>
-        </div>
-
-        <div className="overflow-y-auto" style={{ flex: '1 1 0%' }}>
+    <div>
           {/* ── Stat Cards ── */}
           <div className="grid grid-cols-3 gap-3 px-4 pt-4 pb-3">
             <StatCard
@@ -209,8 +187,6 @@ export default function HoldingsPanel({
               </p>
             )}
           </div>
-        </div>
-      </div>
     </div>
   );
 }
