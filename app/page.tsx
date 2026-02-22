@@ -36,75 +36,20 @@ export default function Dashboard() {
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [error, setError] = useState('');
   const [holdingsReport, setHoldingsReport] = useState<HoldingsReport | null>(null);
-  const [isDeepScan, setIsDeepScan] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState<Set<number>>(new Set([0, 1, 2, 3, 4]));
   const [showHoldings, setShowHoldings] = useState(false);
 
-  /* ── regular scan ── */
+  /* ── scan (always deep) ── */
   const handleScan = useCallback(
-    async (wallet: string, depth: number, limit: number) => {
-      if (!currentToken || !wallet) return;
-
-      setTargetWallet(wallet);
-      setIsScanning(true);
-      setScanPhase('Fetching transfers...');
-      setError('');
-      setScanResult(null);
-      setHoldingsReport(null);
-      setIsDeepScan(false);
-      setVisibleLayers(new Set([0, 1, 2, 3, 4]));
-
-      try {
-        const phaseTimer = setTimeout(() => setScanPhase('Detecting contracts...'), 3000);
-        const phaseTimer2 = setTimeout(() => setScanPhase('Checking balances...'), 7000);
-        const phaseTimer3 = setTimeout(() => setScanPhase('Building graph...'), 11000);
-
-        const res = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            wallet,
-            tokenAddress: currentToken.address,
-            decimals: currentToken.decimals,
-            depth,
-            limit,
-          }),
-        });
-
-        clearTimeout(phaseTimer);
-        clearTimeout(phaseTimer2);
-        clearTimeout(phaseTimer3);
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Scan failed');
-        }
-
-        const data: ScanResult = await res.json();
-        setScanResult(data);
-        setShowAnalysis(true);
-        setScanPhase('');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Scan failed');
-        setScanPhase('');
-      } finally {
-        setIsScanning(false);
-      }
-    },
-    [currentToken]
-  );
-
-  /* ── deep scan ── */
-  const handleDeepScan = useCallback(
     async (wallet: string, _depth: number, limit: number) => {
       if (!currentToken || !wallet) return;
 
       setTargetWallet(wallet);
       setIsScanning(true);
-      setIsDeepScan(true);
       setError('');
       setScanResult(null);
       setHoldingsReport(null);
+      setShowHoldings(false);
       setVisibleLayers(new Set([0, 1, 2, 3, 4]));
 
       const timers: ReturnType<typeof setTimeout>[] = [];
@@ -128,7 +73,7 @@ export default function Dashboard() {
 
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || 'Deep scan failed');
+          throw new Error(data.error || 'Scan failed');
         }
 
         const data: { scanResult: ScanResult; holdingsReport: HoldingsReport } =
@@ -138,7 +83,7 @@ export default function Dashboard() {
         setShowAnalysis(false);
         setScanPhase('');
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Deep scan failed');
+        setError(err instanceof Error ? err.message : 'Scan failed');
         setScanPhase('');
       } finally {
         setIsScanning(false);
@@ -216,9 +161,6 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 border-2 border-[#c9a227]/30 border-t-[#c9a227] rounded-full animate-spin" />
               <span className="text-xs text-[#c9a227] font-mono">{scanPhase}</span>
-              {isDeepScan && (
-                <span className="text-[10px] text-[#c9a227]/60 font-mono">(Deep Scan)</span>
-              )}
             </div>
           ) : scanResult ? (
             <>
@@ -266,7 +208,6 @@ export default function Dashboard() {
           onTokenChange={() => setShowTokenModal(true)}
           onWalletChange={setTargetWallet}
           onScan={handleScan}
-          onDeepScan={handleDeepScan}
           onFilterChange={setActiveFilter}
           onWalletClick={() => {}}
         />

@@ -83,7 +83,6 @@ interface SidebarProps {
   onTokenChange: () => void;
   onWalletChange: (addr: string) => void;
   onScan: (wallet: string, depth: number, limit: number) => void;
-  onDeepScan?: (wallet: string, depth: number, limit: number) => void;
   onFilterChange: (filter: string) => void;
   onWalletClick: (addr: string) => void;
 }
@@ -98,7 +97,6 @@ export default function Sidebar({
   onTokenChange,
   onWalletChange,
   onScan,
-  onDeepScan,
   onFilterChange,
   onWalletClick,
 }: SidebarProps) {
@@ -217,16 +215,6 @@ export default function Sidebar({
               'SCAN'
             )}
           </button>
-          {onDeepScan && (
-            <button
-              onClick={() => onDeepScan(localWallet, depth, limit)}
-              disabled={isScanning || !localWallet}
-              className="px-2.5 py-2 rounded-md font-bold text-[10px] tracking-wider transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-emerald-400/50 text-emerald-400 hover:bg-emerald-400/10 active:scale-[0.97] flex-shrink-0 cursor-pointer"
-              title="Deep Scan: Analyzes funding sources, detects hidden wallets, and estimates total holdings"
-            >
-              DEEP
-            </button>
-          )}
         </div>
         <span className="text-[10px] text-gray-600 font-mono block mt-1.5 px-0.5">
           Default is pre-filled — type or paste any address
