@@ -3,24 +3,51 @@
 @tailwind utilities;
 
 :root {
-  --void: #06070b;
-  --deep: #0c0e16;
-  --surface: #131620;
-  --raised: #1a1e2e;
-  --gold: #c9a227;
-  --gold-dim: #a68520;
-  --gold-glow: rgba(201, 162, 39, 0.15);
+  --bg-base: #111827;
+  --bg-card: #1f2937;
+  --bg-raised: #374151;
+  --border: #374151;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  --accent-gold: #f59e0b;
+  --accent-green: #10b981;
+  --accent-yellow: #fbbf24;
+  --accent-blue: #60a5fa;
+  --accent-purple: #a78bfa;
+  --accent-red: #f87171;
+  --accent-avax: #e84142;
+}
+
+[data-theme="light"] {
+  --bg-base: #f3f4f6;
+  --bg-card: #ffffff;
+  --bg-raised: #e5e7eb;
+  --border: #d1d5db;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --accent-gold: #d97706;
+  --accent-green: #059669;
+  --accent-yellow: #d97706;
+  --accent-blue: #2563eb;
+  --accent-purple: #7c3aed;
+  --accent-red: #dc2626;
+  --accent-avax: #e84142;
 }
 
 * {
+  box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: var(--raised) var(--deep);
+  scrollbar-color: var(--bg-raised) var(--bg-base);
 }
 
 body {
-  background: var(--void);
-  color: #d1d5db;
-  font-family: var(--font-outfit), system-ui, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-outfit), 'Inter', system-ui, sans-serif;
 }
 
 code, pre, .mono {
@@ -28,22 +55,10 @@ code, pre, .mono {
 }
 
 ::selection {
-  background: var(--gold);
-  color: var(--void);
+  background: var(--accent-gold);
+  color: var(--bg-base);
 }
 
-/* Custom scrollbar for Webkit */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--deep);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--raised);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #252a3d;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--bg-raised); border-radius: 3px; }
