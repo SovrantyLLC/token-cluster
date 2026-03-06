@@ -184,6 +184,32 @@ function WalletDrawer({
         </div>
       </div>
 
+      {/* CEX Deposit Match Evidence */}
+      {wallet.cexDepositMatch && wallet.sharedDepositAddress && (
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div
+            className="rounded p-2"
+            style={{ background: 'rgba(245,166,35,0.1)', border: '1px solid var(--accent-gold)' }}
+          >
+            <div className="text-[10px] font-bold mb-1" style={{ color: 'var(--accent-gold)' }}>
+              CEX DEPOSIT MATCH — HIGH CONFIDENCE
+            </div>
+            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              This wallet and {wallet.cexLinkedWallets.length} other wallet(s) have all sent funds
+              to the same {wallet.cexLabel || 'CEX'} deposit address:
+            </div>
+            <div className="font-mono text-[10px] mt-1" style={{ color: 'var(--accent-gold)' }}>
+              {wallet.sharedDepositAddress}
+            </div>
+            <div className="text-[10px] mt-1" style={{ color: 'var(--text-dim)' }}>
+              Linked wallets: {wallet.cexLinkedWallets.map(w => (
+                <span key={w} className="font-mono">{w.slice(0,6)}...{w.slice(-4)} </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div
         className="flex gap-2 px-4 py-3 border-t flex-shrink-0"
@@ -223,16 +249,29 @@ function WalletRow({
   return (
     <div
       className="flex items-center gap-3 px-4 py-3 cursor-pointer border-b transition-colors hover:opacity-90"
-      style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}
+      style={{
+        borderColor: wallet.cexDepositMatch ? 'var(--accent-gold)' : 'var(--border)',
+        borderWidth: wallet.cexDepositMatch ? '2px' : '1px',
+        background: 'var(--bg-card)',
+      }}
       onClick={onSelect}
     >
       <ConfBadge confidence={wallet.confidence} />
 
       <span
-        className="font-mono text-[12px] flex-1 truncate"
+        className="font-mono text-[12px] flex-1 truncate flex items-center gap-1.5"
         style={{ color: 'var(--accent-blue)' }}
       >
         {abbr(wallet.address)}
+        {wallet.cexDepositMatch && (
+          <span
+            className="text-[9px] font-bold px-1 rounded"
+            style={{ background: 'var(--accent-gold)', color: '#000' }}
+            title={`Shared CEX deposit: ${wallet.sharedDepositAddress}`}
+          >
+            CEX LINK
+          </span>
+        )}
       </span>
 
       <div className="text-right shrink-0">

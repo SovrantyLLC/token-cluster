@@ -60,3 +60,25 @@ export const TOKEN_PRESETS: TokenInfo[] = [
 ];
 
 export const DEFAULT_TARGET = '0xae13476C006Bf6409735FB1c7b253AA82a555Ff3';
+
+// Known CEX hot wallet addresses on Avalanche C-Chain
+export const CEX_HOT_WALLETS = new Set([
+  '0x8894e0a0c962cb723c1976a4421c95949be2d4e3', // Binance
+  '0x71660c4005ba85c37ccec55d0c4493e66fe775d3', // Coinbase
+  '0xe5ffa4a8d3f2bc2a2e5f16f5e7c7c1b3a1e91bd0', // Kraken
+  '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b', // OKX
+  '0x2b5634c42055806a59e9107ed44d43c426e58258', // KuCoin
+  '0x0d0707963952f2fba59dd06f2b425ace40b492fe', // Gate.io
+  '0xa7efae728d2936e78bda97dc267687568dd593f3', // Crypto.com
+].map(a => a.toLowerCase()));
+
+// Label map for display
+export const CEX_LABELS: Record<string, string> = {
+  '0x8894e0a0c962cb723c1976a4421c95949be2d4e3': 'Binance',
+  '0x71660c4005ba85c37ccec55d0c4493e66fe775d3': 'Coinbase',
+  '0xe5ffa4a8d3f2bc2a2e5f16f5e7c7c1b3a1e91bd0': 'Kraken',
+  '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b': 'OKX',
+  '0x2b5634c42055806a59e9107ed44d43c426e58258': 'KuCoin',
+  '0x0d0707963952f2fba59dd06f2b425ace40b492fe': 'Gate.io',
+  '0xa7efae728d2936e78bda97dc267687568dd593f3': 'Crypto.com',
+};

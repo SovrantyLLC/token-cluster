@@ -487,6 +487,19 @@ export default function Graph({
       .attr('stroke-opacity', 0.7)
       .attr('filter', 'url(#gold-glow)');
 
+    // CEX-linked nodes get extra gold glow ring
+    const cexLinkedReport = holdingsReport?.wallets.filter(w => w.cexDepositMatch) ?? [];
+    const cexLinkedAddrs = new Set(cexLinkedReport.map(w => w.address.toLowerCase()));
+    nodeEls
+      .filter((d) => cexLinkedAddrs.has(d.id))
+      .append('circle')
+      .attr('r', (d) => nodeRadius(d) + 7)
+      .attr('fill', 'none')
+      .attr('stroke', '#f5a623')
+      .attr('stroke-width', 3)
+      .attr('stroke-opacity', 0.8)
+      .attr('filter', 'url(#gold-glow)');
+
     // Dashed ring for MED confidence
     nodeEls
       .filter((d) => d.layer === 2)
@@ -655,6 +668,17 @@ export default function Graph({
               }
               html += `</div>`;
             }
+            html += `</div>`;
+          }
+        }
+
+        // CEX deposit match info
+        if (cexLinkedAddrs.has(d.id)) {
+          const cexWallet = cexLinkedReport.find(w => w.address.toLowerCase() === d.id);
+          if (cexWallet) {
+            html += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1a1e2e">`;
+            html += `<div style="color:#f5a623;font-weight:bold">CEX DEPOSIT MATCH</div>`;
+            html += `<div style="color:#9ca3af">Shared ${cexWallet.cexLabel || 'CEX'} deposit with ${cexWallet.cexLinkedWallets.length} wallet(s)</div>`;
             html += `</div>`;
           }
         }
@@ -979,6 +1003,10 @@ export default function Graph({
             <div className="flex items-center gap-2" title="Orange ring = wallet has tokens staked in a farm contract">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: COL.stakedOrange, background: 'transparent' }} />
               <span className="text-gray-400">Staked</span>
+            </div>
+            <div className="flex items-center gap-2" title="Gold thick ring = wallets share a CEX deposit address (highest confidence same-owner)">
+              <span className="inline-block w-2.5 h-2.5 rounded-full border-[3px]" style={{ borderColor: '#f5a623', background: 'transparent' }} />
+              <span className="text-gray-400">CEX Link</span>
             </div>
           </div>
         </>

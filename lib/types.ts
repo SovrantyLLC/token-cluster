@@ -102,6 +102,7 @@ export interface ScanResult {
   stakingPositions: Record<string, StakingPositionInfo[]>;
   vlpStakingPositions: Record<string, VLPStakingPosition>;
   crossAssetLinks: CrossAssetLink[];
+  sharedCexDeposits: Record<string, string[]>;
 }
 
 export type TokenOrigin = 'from-target' | 'from-dex' | 'from-third-party' | 'mixed' | 'unknown';
@@ -123,6 +124,10 @@ export interface HiddenHoldingWallet {
   stakedBalance: number;
   totalHoldings: number;
   vlpStaking: VLPStakingPosition | null;
+  cexDepositMatch: boolean;
+  cexLinkedWallets: string[];
+  sharedDepositAddress: string | null;
+  cexLabel: string | null;
 }
 
 export interface OutboundSummary {

@@ -7,6 +7,8 @@ import {
   fetchFundingSources,
   fetchCrossAssetLinks,
   discoverCrossAssetPeers,
+  findCexDepositAddresses,
+  CexDepositResult,
 } from '@/lib/avax';
 import {
   GraphNode,
@@ -464,7 +466,52 @@ async function runDeepScan(body: DeepScanBody) {
     }
   }
 
-  // ── PHASE 4.9b: Cap graph size ──
+  // ── PHASE 4.9b: CEX Deposit Address Clustering ──
+  const cexDepositMap = new Map<string, string[]>();
+  const walletCexDeposits = new Map<string, CexDepositResult[]>();
+
+  const walletNodes = nodes.filter(n => !n.isContract && !n.isTarget);
+  const cexCandidates = walletNodes.slice(0, 50).map(n => n.id);
+  await Promise.allSettled(
+    cexCandidates.map(async (w) => {
+      try {
+        const deposits = await findCexDepositAddresses(w);
+        if (deposits.length > 0) {
+          walletCexDeposits.set(w, deposits);
+          for (const dep of deposits) {
+            const key = dep.depositAddress.toLowerCase();
+            if (!cexDepositMap.has(key)) cexDepositMap.set(key, []);
+            cexDepositMap.get(key)!.push(w);
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    })
+  );
+
+  // Build shared CEX deposit groups (2+ wallets using same deposit address)
+  const sharedCexDeposits = new Map<string, string[]>();
+  cexDepositMap.forEach((wallets, depAddr) => {
+    if (wallets.length >= 2) {
+      sharedCexDeposits.set(depAddr, wallets);
+    }
+  });
+
+  // Attach CEX data to nodes
+  for (const node of nodes) {
+    const deposits = walletCexDeposits.get(node.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyNode = node as any;
+    anyNode._cexDeposits = deposits || [];
+    const sharedDeps = deposits?.filter(d => sharedCexDeposits.has(d.depositAddress)) || [];
+    anyNode._sharedCexDeposits = sharedDeps;
+    anyNode._cexLinkedWallets = sharedDeps.length > 0
+      ? Array.from(new Set(sharedDeps.flatMap(d => sharedCexDeposits.get(d.depositAddress) || []).filter(w => w !== node.id)))
+      : [];
+  }
+
+  // ── PHASE 4.9c: Cap graph size ──
   const MAX_NODES = 150;
   if (nodes.length > MAX_NODES) {
     nodes.sort((a, b) => {
@@ -490,6 +537,7 @@ async function runDeepScan(body: DeepScanBody) {
     stakingPositions,
     vlpStakingPositions,
     crossAssetLinks,
+    sharedCexDeposits: Object.fromEntries(sharedCexDeposits),
   };
 
   const holdingsReport = analyzeHoldings(scanResult, wallet, 'TOKEN', fundingSources);
@@ -620,6 +668,7 @@ async function runDeepScan(body: DeepScanBody) {
       stakingPositions,
       vlpStakingPositions,
       crossAssetLinks: expandedCrossAssetLinks,
+      sharedCexDeposits: Object.fromEntries(sharedCexDeposits),
     };
 
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);

@@ -216,6 +216,7 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     stakingPositions: {},
     crossAssetLinks: [],
     vlpStakingPositions: {},
+    sharedCexDeposits: {},
   };
 }
 

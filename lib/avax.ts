@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { TransferTx, TokenInfo, CrossAssetLink } from './types';
-import { AVAX_RPC, ROUTESCAN_API, SNOWSCAN_API, MULTICALL3_ADDRESS } from './constants';
+import { AVAX_RPC, ROUTESCAN_API, SNOWSCAN_API, MULTICALL3_ADDRESS, CEX_HOT_WALLETS, CEX_LABELS } from './constants';
 import { fetchWithTimeout } from './fetch-with-timeout';
 
 const provider = new ethers.JsonRpcProvider(AVAX_RPC);
@@ -535,4 +535,147 @@ export async function discoverCrossAssetPeers(
   }
 
   return Array.from(discovered);
+}
+
+// ─── CEX Deposit Address Detection ───────────────────────────────────────────
+
+export interface CexDepositResult {
+  depositAddress: string;
+  cexLabel: string;
+  forwardedTo: string;
+  txHash: string;
+  timestamp: number;
+}
+
+/**
+ * For a given wallet, find any CEX deposit addresses they have sent to.
+ * A CEX deposit address is an intermediary address that:
+ *   - received funds FROM this wallet
+ *   - then forwarded those funds onward to a known CEX hot wallet
+ *   OR has near-zero current balance (classic deposit address behavior)
+ */
+export async function findCexDepositAddresses(
+  wallet: string
+): Promise<CexDepositResult[]> {
+  const addr = wallet.toLowerCase();
+  const results: CexDepositResult[] = [];
+  const seen = new Set<string>();
+
+  // Step 1: Get outbound native AVAX transactions from this wallet
+  let outboundTxs: Array<{ to: string; hash: string; timeStamp: string }> = [];
+
+  const apis = [ROUTESCAN_API, SNOWSCAN_API];
+  for (const api of apis) {
+    try {
+      const params = new URLSearchParams({
+        module: 'account',
+        action: 'txlist',
+        address: addr,
+        sort: 'desc',
+        page: '1',
+        offset: '200',
+      });
+      const res = await fetchWithTimeout(`${api}?${params}`, {}, 12_000);
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (json.status !== '1' || !Array.isArray(json.result)) continue;
+      outboundTxs = json.result.filter(
+        (tx: Record<string, string>) => tx.from?.toLowerCase() === addr && tx.to && tx.value && BigInt(tx.value) > BigInt(0)
+      );
+      if (outboundTxs.length > 0) break;
+    } catch {
+      continue;
+    }
+  }
+
+  if (outboundTxs.length === 0) return results;
+
+  // Step 2: For each recipient, check if it looks like a CEX deposit address
+  const candidates = Array.from(new Set(outboundTxs.map(tx => tx.to.toLowerCase()))).slice(0, 30);
+
+  await Promise.allSettled(
+    candidates.map(async (candidate) => {
+      if (seen.has(candidate)) return;
+      seen.add(candidate);
+
+      if (
+        candidate === '0x0000000000000000000000000000000000000000' ||
+        candidate === addr
+      ) return;
+
+      // Direct deposit to known CEX hot wallet
+      if (CEX_HOT_WALLETS.has(candidate)) {
+        const srcTx = outboundTxs.find(tx => tx.to.toLowerCase() === candidate);
+        if (srcTx) {
+          results.push({
+            depositAddress: candidate,
+            cexLabel: CEX_LABELS[candidate] || 'CEX',
+            forwardedTo: candidate,
+            txHash: srcTx.hash,
+            timestamp: parseInt(srcTx.timeStamp, 10),
+          });
+        }
+        return;
+      }
+
+      // Fetch outbound txs FROM the candidate address to check forwarding behavior
+      for (const api of apis) {
+        try {
+          const params = new URLSearchParams({
+            module: 'account',
+            action: 'txlist',
+            address: candidate,
+            sort: 'desc',
+            page: '1',
+            offset: '20',
+          });
+          const res = await fetchWithTimeout(`${api}?${params}`, {}, 10_000);
+          if (!res.ok) continue;
+          const json = await res.json();
+          if (json.status !== '1' || !Array.isArray(json.result)) continue;
+
+          const candidateTxs = json.result as Array<{ from: string; to: string; value: string; hash: string }>;
+
+          // Check if any outbound tx from candidate goes to a known CEX hot wallet
+          for (const tx of candidateTxs) {
+            const txTo = tx.to?.toLowerCase();
+            if (txTo && CEX_HOT_WALLETS.has(txTo)) {
+              const srcTx = outboundTxs.find(t => t.to.toLowerCase() === candidate);
+              if (srcTx) {
+                results.push({
+                  depositAddress: candidate,
+                  cexLabel: CEX_LABELS[txTo] || 'Unknown CEX',
+                  forwardedTo: txTo,
+                  txHash: srcTx.hash,
+                  timestamp: parseInt(srcTx.timeStamp, 10),
+                });
+              }
+              return;
+            }
+          }
+
+          // Heuristic fallback: if the candidate has only 1-2 unique destinations
+          // for all its outbound txs, it behaves like a deposit address
+          const destinations = new Set(candidateTxs.map(tx => tx.to?.toLowerCase()).filter(Boolean));
+          if (destinations.size <= 2 && candidateTxs.length >= 3) {
+            const srcTx = outboundTxs.find(t => t.to.toLowerCase() === candidate);
+            if (srcTx) {
+              results.push({
+                depositAddress: candidate,
+                cexLabel: 'Unknown CEX',
+                forwardedTo: Array.from(destinations)[0] || candidate,
+                txHash: srcTx.hash,
+                timestamp: parseInt(srcTx.timeStamp, 10),
+              });
+            }
+          }
+          break;
+        } catch {
+          continue;
+        }
+      }
+    })
+  );
+
+  return results;
 }

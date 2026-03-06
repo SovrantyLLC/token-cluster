@@ -12,6 +12,7 @@ import {
   WalletHistory,
 } from './types';
 import { KNOWN_CONTRACTS } from './constants';
+import { CexDepositResult } from './avax';
 
 interface WalletScore {
   address: string;
@@ -26,6 +27,10 @@ interface WalletScore {
   balance: number;
   tokenOrigin: TokenOrigin;
   tokenOriginDetails: string;
+  cexDepositMatch: boolean;
+  cexLinkedWallets: string[];
+  sharedDepositAddress: string | null;
+  cexLabel: string | null;
 }
 
 function abbr(addr: string): string {
@@ -727,6 +732,26 @@ export function analyzeHoldings(
       );
     }
 
+    // ── HEURISTIC 11: Shared CEX Deposit Address (+50 points, HIGHEST SIGNAL) ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sharedCexDeps = ((node as any)._sharedCexDeposits as CexDepositResult[] | undefined) || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cexLinkedWallets = ((node as any)._cexLinkedWallets as string[] | undefined) || [];
+    let cexDepositMatch = false;
+    let sharedDepositAddress: string | null = null;
+    let cexLabel: string | null = null;
+
+    if (sharedCexDeps.length > 0) {
+      cexDepositMatch = true;
+      sharedDepositAddress = sharedCexDeps[0].depositAddress;
+      cexLabel = sharedCexDeps[0].cexLabel;
+      score += 50;
+      breakdown.push({ signal: 'Shared CEX deposit address', points: 50 });
+      reasons.push(
+        `Shared CEX deposit address (${cexLabel || 'Unknown CEX'}): ${abbr(sharedDepositAddress)} — also used by ${cexLinkedWallets.map(abbr).join(', ')}`
+      );
+    }
+
     scores.push({
       address: node.address,
       score,
@@ -740,6 +765,10 @@ export function analyzeHoldings(
       balance: node.balance ?? 0,
       tokenOrigin,
       tokenOriginDetails,
+      cexDepositMatch,
+      cexLinkedWallets: cexLinkedWallets as string[],
+      sharedDepositAddress,
+      cexLabel,
     });
 
   }
@@ -805,7 +834,7 @@ export function analyzeHoldings(
   }
 
   // Convert to HiddenHoldingWallet (filter out low-signal wallets)
-  const wallets: HiddenHoldingWallet[] = scores.filter((s) => s.score >= 25 && s.scoreBreakdown.length >= 2).map((s) => {
+  const wallets: HiddenHoldingWallet[] = scores.filter((s) => (s.score >= 25 && s.scoreBreakdown.length >= 2) || s.cexDepositMatch).map((s) => {
     const addr = s.address.toLowerCase();
     const nodeForAddr = nodes.find((n) => n.id === addr);
     const lpBal = nodeForAddr?.lpBalance ?? 0;
@@ -828,6 +857,10 @@ export function analyzeHoldings(
       stakedBalance: stakedBal,
       totalHoldings,
       vlpStaking: nodeForAddr?.vlpStaking ?? null,
+      cexDepositMatch: s.cexDepositMatch,
+      cexLinkedWallets: s.cexLinkedWallets,
+      sharedDepositAddress: s.sharedDepositAddress,
+      cexLabel: s.cexLabel,
     };
   });
 
@@ -875,7 +908,7 @@ export function analyzeHoldings(
   // Generate risk flags
   const riskFlags = generateRiskFlags(
     wallets, targetSentTxs, sequentialGroups, fundingClusters,
-    target, tokenSymbol, ghostWallets, passThroughWallets
+    target, tokenSymbol, ghostWallets, passThroughWallets, nodes
   );
 
   // Generate cluster summary
@@ -981,7 +1014,8 @@ function generateRiskFlags(
   target: string,
   tokenSymbol: string,
   ghostWallets: WalletHistory[],
-  passThroughWallets: Set<string>
+  passThroughWallets: Set<string>,
+  nodes: GraphNode[]
 ): string[] {
   const flags: string[] = [];
 
@@ -1086,6 +1120,24 @@ function generateRiskFlags(
     flags.push(
       `Cross-asset correlation: ${crossAssetWallets.length} wallet(s) share AVAX/USDC/USDT transfers with the target or other cluster members`
     );
+  }
+
+  // CEX deposit clustering flag
+  const cexLinkedWallets = wallets.filter(w => w.cexDepositMatch);
+  if (cexLinkedWallets.length > 0) {
+    const cexNames = Array.from(new Set(cexLinkedWallets.map(w => w.cexLabel).filter(Boolean))).join(', ');
+    flags.push(
+      `CEX deposit clustering: ${cexLinkedWallets.length} wallet(s) share CEX deposit addresses (${cexNames || 'Unknown CEX'}) — highest confidence same-owner signal`
+    );
+  }
+
+  // Target's own CEX deposits
+  const targetNode = nodes.find(n => n.id === target);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const targetCexDeposits = ((targetNode as any)?._cexDeposits as CexDepositResult[] | undefined) || [];
+  if (targetCexDeposits.length > 0) {
+    const cexNames = Array.from(new Set(targetCexDeposits.map(d => d.cexLabel))).join(', ');
+    flags.push(`Target wallet has sent to CEX deposit addresses (${cexNames}) — institutional or large holder behavior`);
   }
 
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
