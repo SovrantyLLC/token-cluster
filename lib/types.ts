@@ -87,7 +87,7 @@ export interface ScanResult {
   links: GraphLink[];
   transfers: TransferTx[];
   detectedContracts: string[];
-  balances: Record<string, number>;
+  balances: Record<string, number | null>;
   fundingSources?: Record<string, string>;
   lpPairs: string[];
   lpPositions: Record<string, LPPosition[]>;
@@ -102,6 +102,7 @@ export interface HiddenHoldingWallet {
   balance: number;
   confidence: 'high' | 'medium' | 'low';
   reasons: string[];
+  scoreBreakdown: { signal: string; points: number }[];
   fundingSource: string | null;
   firstInteraction: number;
   lastInteraction: number;

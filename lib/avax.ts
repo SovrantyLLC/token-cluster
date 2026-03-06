@@ -5,6 +5,17 @@ import { fetchWithTimeout } from './fetch-with-timeout';
 
 const provider = new ethers.JsonRpcProvider(AVAX_RPC);
 
+/** Precision-safe BigInt → float conversion. Avoids Number() overflow for large token balances. */
+function bigIntToFloat(value: bigint, decimals: number): number {
+  const str = value.toString();
+  if (str.length <= decimals) {
+    return Number(value) / Math.pow(10, decimals);
+  }
+  const intPart = str.slice(0, str.length - decimals);
+  const fracPart = str.slice(str.length - decimals, str.length - decimals + 6);
+  return parseFloat(`${intPart}.${fracPart}`);
+}
+
 const erc20Iface = new ethers.Interface([
   'function balanceOf(address) view returns (uint256)',
 ]);
@@ -136,12 +147,12 @@ export async function getTokenBalanceBatch(
               'balanceOf',
               responses[j].returnData
             )[0] as bigint;
-            results[addr] = Number(balance) / Math.pow(10, decimals);
+            results[addr] = bigIntToFloat(balance, decimals);
           } else {
             results[addr] = 0;
           }
         } catch {
-          results[addr] = 0;
+          results[addr] = null as unknown as number;
         }
       }
     } catch {
@@ -167,9 +178,9 @@ async function fallbackIndividualBalances(
           const calldata = erc20Iface.encodeFunctionData('balanceOf', [wallet]);
           const raw = await provider.call({ to: tokenAddress, data: calldata });
           const balance = erc20Iface.decodeFunctionResult('balanceOf', raw)[0] as bigint;
-          results[wallet.toLowerCase()] = Number(balance) / Math.pow(10, decimals);
+          results[wallet.toLowerCase()] = bigIntToFloat(balance, decimals);
         } catch {
-          results[wallet.toLowerCase()] = 0;
+          results[wallet.toLowerCase()] = null as unknown as number;
         }
       })
     );
@@ -429,7 +440,7 @@ export async function fetchCrossAssetLinks(
         const from = tx.from.toLowerCase();
         const to = (tx.to || '').toLowerCase();
         if (!to) continue;
-        const val = Number(BigInt(tx.value || '0')) / 1e18;
+        const val = bigIntToFloat(BigInt(tx.value || '0'), 18);
         if (val < 0.001) continue; // ignore dust
         const ts = parseInt(tx.timeStamp, 10);
 
@@ -504,7 +515,7 @@ export async function discoverCrossAssetPeers(
     const from = tx.from.toLowerCase();
     const to = (tx.to || '').toLowerCase();
     if (!to) continue;
-    const val = Number(BigInt(tx.value || '0')) / 1e18;
+    const val = bigIntToFloat(BigInt(tx.value || '0'), 18);
     if (val < 0.01) continue; // ignore dust
 
     const peer = from === target ? to : from;

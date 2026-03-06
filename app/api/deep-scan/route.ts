@@ -259,14 +259,14 @@ async function runDeepScan(body: DeepScanBody) {
       return n.volIn > 0;
     })
     .sort((a, b) => {
-      const aZero = (balances[a.id] ?? 0) === 0 ? 0 : 1;
-      const bZero = (balances[b.id] ?? 0) === 0 ? 0 : 1;
+      const aZero = balances[a.id] === 0 ? 0 : 1;
+      const bZero = balances[b.id] === 0 ? 0 : 1;
       if (aZero !== bZero) return aZero - bZero;
       return b.volIn - a.volIn;
     })
     .map((n) => n.id)
     .filter((addr) => !fetchedWallets.has(addr))
-    .slice(0, 20);
+    .slice(0, 10);
 
   if (ghostCandidates.length > 0) {
     for (let i = 0; i < ghostCandidates.length; i += 3) {
@@ -436,6 +436,19 @@ async function runDeepScan(body: DeepScanBody) {
     }
   }
 
+  // ── PHASE 4.9: Cap graph size ──
+  const MAX_NODES = 150;
+  if (nodes.length > MAX_NODES) {
+    nodes.sort((a, b) => {
+      if (a.isTarget) return -1;
+      if (b.isTarget) return 1;
+      return (b.balance ?? 0) + b.volIn + b.volOut - ((a.balance ?? 0) + a.volIn + a.volOut);
+    });
+    const kept = new Set(nodes.slice(0, MAX_NODES).map((n) => n.id));
+    nodes = nodes.filter((n) => kept.has(n.id));
+    links = links.filter((l) => kept.has(l.source) && kept.has(l.target));
+  }
+
   // ── PHASE 5: Run holdings analysis ──
   const scanResult: ScanResult = {
     nodes,
@@ -552,9 +565,23 @@ async function runDeepScan(body: DeepScanBody) {
       ? await fetchCrossAssetLinks(expandedCrossAssetWallets)
       : [];
 
+    // Cap expanded graph
+    let expandedNodes = expanded.nodes;
+    let expandedLinks = expanded.links;
+    if (expandedNodes.length > MAX_NODES) {
+      expandedNodes.sort((a, b) => {
+        if (a.isTarget) return -1;
+        if (b.isTarget) return 1;
+        return (b.balance ?? 0) + b.volIn + b.volOut - ((a.balance ?? 0) + a.volIn + a.volOut);
+      });
+      const kept = new Set(expandedNodes.slice(0, MAX_NODES).map((n) => n.id));
+      expandedNodes = expandedNodes.filter((n) => kept.has(n.id));
+      expandedLinks = expandedLinks.filter((l) => kept.has(l.source) && kept.has(l.target));
+    }
+
     const expandedScanResult: ScanResult = {
-      nodes: expanded.nodes,
-      links: expanded.links,
+      nodes: expandedNodes,
+      links: expandedLinks,
       transfers: allTransfers,
       detectedContracts: Array.from(contractSet),
       balances,
@@ -568,7 +595,7 @@ async function runDeepScan(body: DeepScanBody) {
     const finalReport = analyzeHoldings(expandedScanResult, wallet, 'TOKEN', fundingSources);
 
     // Attach wallet history data to nodes
-    attachHistoryToNodes(expandedScanResult.nodes, finalReport.walletHistories);
+    attachHistoryToNodes(expandedNodes, finalReport.walletHistories);
 
     return { scanResult: expandedScanResult, holdingsReport: finalReport };
   }

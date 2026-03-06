@@ -52,7 +52,7 @@ const HL = {
 };
 
 type SortCol = 'balance' | 'transfers';
-type TabKey = 'report' | 'balances' | 'timeline';
+type TabKey = 'cluster' | 'report' | 'balances' | 'timeline';
 
 /* ── component ───────────────────────────── */
 export default function AnalysisPanel({
@@ -65,7 +65,7 @@ export default function AnalysisPanel({
   holdingsReport,
   onClose,
 }: AnalysisPanelProps) {
-  const [tab, setTab] = useState<TabKey>('report');
+  const [tab, setTab] = useState<TabKey>('cluster');
   const [sortCol, setSortCol] = useState<SortCol>('balance');
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -189,6 +189,7 @@ export default function AnalysisPanel({
   };
 
   const TABS: { key: TabKey; label: string }[] = [
+    { key: 'cluster', label: 'Cluster' },
     { key: 'report', label: 'Report' },
     { key: 'balances', label: 'Balance Sheet' },
     { key: 'timeline', label: 'Timeline' },
@@ -236,6 +237,8 @@ export default function AnalysisPanel({
             >
               Run a scan to generate analysis
             </div>
+          ) : tab === 'cluster' ? (
+            <ClusterTab holdingsReport={holdingsReport} sym={tokenSymbol} />
           ) : tab === 'report' ? (
             <ReportTab a={analysis} target={target} sym={tokenSymbol} holdingsReport={holdingsReport} />
           ) : tab === 'timeline' ? (
@@ -492,6 +495,146 @@ function ReportTab({
           <p className="text-gray-500">No heavy interactors found.</p>
         )}
       </section>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════
+   CLUSTER TAB
+   ═══════════════════════════════════════════ */
+function ClusterTab({
+  holdingsReport,
+  sym,
+}: {
+  holdingsReport: HoldingsReport | null;
+  sym: string;
+}) {
+  const [expandedWallet, setExpandedWallet] = useState<string | null>(null);
+
+  if (!holdingsReport) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-600 font-mono text-xs" style={{ background: '#0c0e16' }}>
+        No cluster data available
+      </div>
+    );
+  }
+
+  const { wallets, riskFlags, targetBalance, totalTrueHoldings, totalInLP, totalStaked } = holdingsReport;
+  const highWallets = wallets.filter((w) => w.confidence === 'high');
+  const medWallets = wallets.filter((w) => w.confidence === 'medium');
+  const lowWallets = wallets.filter((w) => w.confidence === 'low');
+
+  const confBuckets: { label: string; color: string; items: typeof wallets }[] = [
+    { label: 'HIGH', color: 'text-red-400', items: highWallets },
+    { label: 'MEDIUM', color: 'text-amber-400', items: medWallets },
+    { label: 'LOW', color: 'text-gray-400', items: lowWallets },
+  ];
+
+  return (
+    <div className="p-4 space-y-4 text-[12px] leading-relaxed" style={{ background: '#0c0e16' }}>
+      {/* Entity summary */}
+      <section>
+        <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
+          Cluster Summary
+        </h3>
+        <div className="grid grid-cols-4 gap-3 font-mono text-[11px]">
+          <div>
+            <div className="text-gray-500 text-[9px] uppercase">Target</div>
+            <div className="text-emerald-400">{fmt(targetBalance)} {sym}</div>
+          </div>
+          <div>
+            <div className="text-gray-500 text-[9px] uppercase">Total Holdings</div>
+            <div className="text-[#c9a227]">{fmt(totalTrueHoldings)} {sym}</div>
+          </div>
+          <div>
+            <div className="text-gray-500 text-[9px] uppercase">In LP</div>
+            <div className="text-[#a87cdb]">{fmt(totalInLP)} {sym}</div>
+          </div>
+          <div>
+            <div className="text-gray-500 text-[9px] uppercase">Staked</div>
+            <div className="text-[#4ea8de]">{fmt(totalStaked)} {sym}</div>
+          </div>
+        </div>
+        <div className="mt-2 flex gap-4 font-mono text-[11px]">
+          <span className="text-red-400">{highWallets.length} HIGH</span>
+          <span className="text-amber-400">{medWallets.length} MEDIUM</span>
+          <span className="text-gray-400">{lowWallets.length} LOW</span>
+          <span className="text-gray-600">{wallets.length} total wallets</span>
+        </div>
+      </section>
+
+      {/* Risk flags */}
+      {riskFlags.length > 0 && (
+        <section>
+          <h3 className="text-[10px] font-mono uppercase tracking-wider text-gray-500 mb-1">
+            Risk Flags
+          </h3>
+          <div className="space-y-0.5">
+            {riskFlags.map((flag, i) => (
+              <div key={i} className="flex items-start gap-2 text-[11px] font-mono">
+                <span className="text-amber-400 flex-shrink-0">{'\u26A0'}</span>
+                <span className="text-gray-300">{flag}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Wallet list by confidence */}
+      {confBuckets.map(({ label, color, items }) =>
+        items.length > 0 ? (
+          <section key={label}>
+            <h3 className={`text-[10px] font-mono uppercase tracking-wider mb-1 ${color}`}>
+              {label} Confidence ({items.length})
+            </h3>
+            <div className="space-y-1">
+              {items.map((w) => {
+                const isExpanded = expandedWallet === w.address;
+                return (
+                  <div key={w.address}>
+                    <button
+                      onClick={() => setExpandedWallet(isExpanded ? null : w.address)}
+                      className="w-full flex items-center gap-2 font-mono text-[11px] hover:bg-[#131620] px-1 py-0.5 rounded transition-colors text-left"
+                    >
+                      <span className="text-gray-600">{isExpanded ? '\u25BC' : '\u25B6'}</span>
+                      <span className="text-[#4ea8de]">{abbr(w.address)}</span>
+                      <span className="text-emerald-400">{fmt(w.balance)} {sym}</span>
+                      {w.lpBalance > 0 && <span className="text-[#a87cdb]">+{fmt(w.lpBalance)} LP</span>}
+                      {w.stakedBalance > 0 && <span className="text-[#4ea8de]">+{fmt(w.stakedBalance)} staked</span>}
+                      <span className="text-gray-600 ml-auto">{w.transfersWithTarget}tx</span>
+                    </button>
+                    {isExpanded && (
+                      <div className="ml-6 mt-1 mb-2 space-y-1 border-l border-raised/30 pl-3">
+                        <div className="text-[10px] text-gray-500 uppercase mb-1">Score Breakdown</div>
+                        {w.scoreBreakdown.map((b, i) => (
+                          <div key={i} className="flex items-center gap-2 font-mono text-[10px]">
+                            <span className={b.points >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                              {b.points >= 0 ? '+' : ''}{b.points}
+                            </span>
+                            <span className="text-gray-400">{b.signal}</span>
+                          </div>
+                        ))}
+                        <div className="text-[10px] text-gray-500 uppercase mt-2 mb-1">Evidence</div>
+                        {w.reasons.map((r, i) => (
+                          <div key={i} className="text-[10px] text-gray-400 font-mono">{'\u2022'} {r}</div>
+                        ))}
+                        <div className="text-[10px] text-gray-600 mt-1">
+                          Origin: <span className="text-gray-400">{w.tokenOriginDetails}</span>
+                        </div>
+                        {w.fundingSource && (
+                          <div className="text-[10px] text-gray-600">
+                            Gas funder: <span className="text-[#4ea8de]">{abbr(w.fundingSource)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null
+      )}
     </div>
   );
 }
