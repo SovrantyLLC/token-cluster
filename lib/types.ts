@@ -40,6 +40,13 @@ export interface StakingPositionInfo {
   sharePercentage?: number;
 }
 
+export interface VLPStakingPosition {
+  vlpStaked: number;
+  fldEquivalent: number;
+  unstakingDetected: boolean;
+  lastUnstakeDate: number | null;
+}
+
 export interface CrossAssetLink {
   from: string;
   to: string;
@@ -72,6 +79,7 @@ export interface GraphNode {
   totalHoldings: number;
   lpPositions: LPPosition[];
   stakingPositions: StakingPositionInfo[];
+  vlpStaking: VLPStakingPosition | null;
 }
 
 export interface GraphLink {
@@ -92,6 +100,7 @@ export interface ScanResult {
   lpPairs: string[];
   lpPositions: Record<string, LPPosition[]>;
   stakingPositions: Record<string, StakingPositionInfo[]>;
+  vlpStakingPositions: Record<string, VLPStakingPosition>;
   crossAssetLinks: CrossAssetLink[];
 }
 
@@ -113,6 +122,7 @@ export interface HiddenHoldingWallet {
   lpBalance: number;
   stakedBalance: number;
   totalHoldings: number;
+  vlpStaking: VLPStakingPosition | null;
 }
 
 export interface OutboundSummary {

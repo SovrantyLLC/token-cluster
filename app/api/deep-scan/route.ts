@@ -15,10 +15,11 @@ import {
   ScanResult,
   WalletHistory,
   LPPosition,
+  VLPStakingPosition,
 } from '@/lib/types';
 import { KNOWN_CONTRACTS } from '@/lib/constants';
 import { analyzeHoldings } from '@/lib/holdings-analyzer';
-import { findLPPairs, getLPPositions } from '@/lib/lp-detection';
+import { findLPPairs, getLPPositions, getStakedVLPPositions } from '@/lib/lp-detection';
 import { getStakingPositions, StakingPosition } from '@/lib/staking';
 import { rateLimit, getRateLimitHeaders } from '@/lib/rate-limit';
 import { withOverallTimeout } from '@/lib/fetch-with-timeout';
@@ -69,6 +70,7 @@ function buildGraph(
         totalHoldings: 0,
         lpPositions: [],
         stakingPositions: [],
+        vlpStaking: null,
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -100,6 +102,7 @@ function buildGraph(
         totalHoldings: 0,
         lpPositions: [],
         stakingPositions: [],
+        vlpStaking: null,
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -406,6 +409,7 @@ async function runDeepScan(body: DeepScanBody) {
             totalHoldings: discoveredBalances[addr] ?? 0,
             lpPositions: [],
             stakingPositions: [],
+            vlpStaking: null,
           });
         }
       }
@@ -436,7 +440,31 @@ async function runDeepScan(body: DeepScanBody) {
     }
   }
 
-  // ── PHASE 4.9: Cap graph size ──
+  // ── PHASE 4.9a: VLP staking via Ninety1 transfer events ──
+  const NINETY1_STAKING = '0x17427aF0F2E0ed27856C3288Bb902115467e2540';
+  const FATE_FLD_VLP = '0xcf55499e13bf758ddb9d40883c1e123ce18c2888';
+  const vlpStakingPositions: Record<string, VLPStakingPosition> = {};
+  const allWalletAddrs = nodes.filter(n => !n.isContract).map(n => n.id);
+  if (allWalletAddrs.length > 0) {
+    try {
+      const vlpResults = await getStakedVLPPositions(
+        allWalletAddrs, NINETY1_STAKING, FATE_FLD_VLP, decimals
+      );
+      Object.assign(vlpStakingPositions, vlpResults);
+    } catch {
+      // non-fatal
+    }
+  }
+  for (const node of nodes) {
+    const pos = vlpStakingPositions[node.id];
+    if (pos) {
+      node.vlpStaking = pos;
+      node.stakedBalance = (node.stakedBalance || 0) + pos.fldEquivalent;
+      node.totalHoldings = (node.balance ?? 0) + node.lpBalance + node.stakedBalance;
+    }
+  }
+
+  // ── PHASE 4.9b: Cap graph size ──
   const MAX_NODES = 150;
   if (nodes.length > MAX_NODES) {
     nodes.sort((a, b) => {
@@ -460,6 +488,7 @@ async function runDeepScan(body: DeepScanBody) {
     lpPairs,
     lpPositions,
     stakingPositions,
+    vlpStakingPositions,
     crossAssetLinks,
   };
 
@@ -589,6 +618,7 @@ async function runDeepScan(body: DeepScanBody) {
       lpPairs,
       lpPositions,
       stakingPositions,
+      vlpStakingPositions,
       crossAssetLinks: expandedCrossAssetLinks,
     };
 

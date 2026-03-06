@@ -230,6 +230,124 @@ export async function getLPPositions(
   return results;
 }
 
+const ROUTESCAN_API_LP = 'https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api';
+const SNOWSCAN_API_LP = 'https://api.snowscan.xyz/api';
+
+/**
+ * Get net VLP staked in Ninety1 per wallet by reading ERC-20 transfer events.
+ * Net staked = sum of VLP transfers TO staking contract - sum of VLP transfers FROM staking contract.
+ * Then converts VLP -> FLD using pool reserves.
+ */
+export async function getStakedVLPPositions(
+  wallets: string[],
+  stakingContract: string,
+  vlpTokenAddress: string,
+  tokenDecimals: number
+): Promise<Record<string, { vlpStaked: number; fldEquivalent: number; unstakingDetected: boolean; lastUnstakeDate: number | null }>> {
+  if (wallets.length === 0) return {};
+
+  const results: Record<string, { vlpStaked: number; fldEquivalent: number; unstakingDetected: boolean; lastUnstakeDate: number | null }> = {};
+  const stakingAddr = stakingContract.toLowerCase();
+  const vlpAddr = vlpTokenAddress.toLowerCase();
+
+  // Fetch VLP pool reserves to convert VLP -> FLD
+  let fldReserve = 0;
+  let totalVLPSupply = 0;
+  try {
+    const metaCalls = [
+      { target: vlpAddr, allowFailure: true, callData: pairIface.encodeFunctionData('token0', []) },
+      { target: vlpAddr, allowFailure: true, callData: pairIface.encodeFunctionData('getReserves', []) },
+      { target: vlpAddr, allowFailure: true, callData: pairIface.encodeFunctionData('totalSupply', []) },
+    ];
+    const calldata = multicallIface.encodeFunctionData('aggregate3', [metaCalls]);
+    const raw = await provider.call({ to: MULTICALL3_ADDRESS, data: calldata });
+    const decoded = multicallIface.decodeFunctionResult('aggregate3', raw);
+    const responses = decoded[0] as Array<{ success: boolean; returnData: string }>;
+
+    if (responses[0].success && responses[1].success && responses[2].success) {
+      const [token0Addr] = pairIface.decodeFunctionResult('token0', responses[0].returnData);
+      const [r0, r1] = pairIface.decodeFunctionResult('getReserves', responses[1].returnData);
+      const [ts] = pairIface.decodeFunctionResult('totalSupply', responses[2].returnData);
+
+      const FLD_ADDR = '0x88f89be3e9b1dc1c5f208696fb9cabfcc684bd5f';
+      const fldIsToken0 = (token0Addr as string).toLowerCase() === FLD_ADDR;
+      const fldReserveBig = fldIsToken0 ? (r0 as bigint) : (r1 as bigint);
+
+      fldReserve = Number(fldReserveBig) / Math.pow(10, tokenDecimals);
+      totalVLPSupply = Number(ts as bigint) / 1e18;
+    }
+  } catch {
+    // If reserve fetch fails, we still return VLP amounts without FLD conversion
+  }
+
+  // For each wallet, fetch VLP transfer events to/from the staking contract
+  for (const wallet of wallets) {
+    try {
+      const walletAddr = wallet.toLowerCase();
+      let transfers: Array<{ from: string; to: string; value: string; timeStamp: string }> = [];
+
+      // Try Routescan first, then Snowscan
+      for (const api of [ROUTESCAN_API_LP, SNOWSCAN_API_LP]) {
+        try {
+          const url = `${api}?module=account&action=tokentx&contractaddress=${vlpAddr}&address=${walletAddr}&sort=asc&offset=1000&page=1`;
+          const res = await fetch(url);
+          const json = await res.json();
+          if (json.status === '1' && Array.isArray(json.result)) {
+            transfers = json.result;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (transfers.length === 0) continue;
+
+      let netVLPRaw = BigInt(0);
+      let unstakingDetected = false;
+      let lastUnstakeDate: number | null = null;
+      const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60;
+
+      for (const tx of transfers) {
+        const from = tx.from.toLowerCase();
+        const to = tx.to.toLowerCase();
+        const value = BigInt(tx.value);
+
+        if (from === walletAddr && to === stakingAddr) {
+          netVLPRaw += value;
+        } else if (from === stakingAddr && to === walletAddr) {
+          netVLPRaw -= value;
+          unstakingDetected = true;
+          const ts = parseInt(tx.timeStamp, 10);
+          if (ts > thirtyDaysAgo) {
+            lastUnstakeDate = ts;
+          }
+        }
+      }
+
+      if (netVLPRaw <= BigInt(0)) continue;
+
+      const vlpStaked = Number(netVLPRaw) / 1e18;
+      const fldEquivalent = totalVLPSupply > 0
+        ? (vlpStaked / totalVLPSupply) * fldReserve
+        : 0;
+
+      if (vlpStaked < 0.001) continue;
+
+      results[walletAddr] = {
+        vlpStaked,
+        fldEquivalent,
+        unstakingDetected,
+        lastUnstakeDate,
+      };
+    } catch {
+      // skip wallet on error
+    }
+  }
+
+  return results;
+}
+
 function getOtherToken(token0: string, fldAddr: string): string {
   // If FLD is token0, other is token1 (we don't query token1 separately, infer from known pairs)
   // The pair was created with getPair(FLD, otherToken), so the other token is one of WAVAX/USDC/USDT

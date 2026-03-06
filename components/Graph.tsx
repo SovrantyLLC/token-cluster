@@ -129,6 +129,7 @@ function assignLayers(
         totalHoldings: w.totalHoldings ?? w.balance,
         lpPositions: [],
         stakingPositions: [],
+        vlpStaking: null,
       });
       existingIds.add(addr);
     }

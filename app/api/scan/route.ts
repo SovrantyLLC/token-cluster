@@ -54,6 +54,7 @@ function buildGraph(
         totalHoldings: 0,
         lpPositions: [],
         stakingPositions: [],
+        vlpStaking: null,
       });
     }
     const fromNode = nodeMap.get(from)!;
@@ -86,6 +87,7 @@ function buildGraph(
         totalHoldings: 0,
         lpPositions: [],
         stakingPositions: [],
+        vlpStaking: null,
       });
     }
     const toNode = nodeMap.get(to)!;
@@ -213,6 +215,7 @@ async function runScan(body: ScanBody): Promise<ScanResult> {
     lpPositions: {},
     stakingPositions: {},
     crossAssetLinks: [],
+    vlpStakingPositions: {},
   };
 }
 

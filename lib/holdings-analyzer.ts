@@ -827,6 +827,7 @@ export function analyzeHoldings(
       lpBalance: lpBal,
       stakedBalance: stakedBal,
       totalHoldings,
+      vlpStaking: nodeForAddr?.vlpStaking ?? null,
     };
   });
 
@@ -1064,6 +1065,17 @@ function generateRiskFlags(
     flags.push(
       `${stakedHolders.length} cluster wallet(s) have ${fmt(totalStaked)} ${tokenSymbol} staked in farm contracts`
     );
+  }
+
+  // VLP unstaking detection
+  const unstakingWallets = wallets.filter((w) => w.vlpStaking?.unstakingDetected);
+  if (unstakingWallets.length > 0) {
+    const recentUnstakers = unstakingWallets.filter((w) => w.vlpStaking?.lastUnstakeDate != null);
+    if (recentUnstakers.length > 0) {
+      flags.push(
+        `${recentUnstakers.length} cluster wallet(s) recently unstaked VLP from Ninety1 — potential exit signal`
+      );
+    }
   }
 
   // Cross-asset correlation flag

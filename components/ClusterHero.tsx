@@ -103,6 +103,19 @@ function WalletDrawer({
               </span>
             </div>
           )}
+          {wallet.vlpStaking && wallet.vlpStaking.vlpStaked > 0 && (
+            <div className="flex justify-between">
+              <span style={{ color: 'var(--text-muted)' }}>
+                VLP in Ninety1
+                {wallet.vlpStaking.unstakingDetected && (
+                  <span className="text-[9px] ml-1" style={{ color: 'var(--accent-red)' }}>{'\u26A0'} unstaking</span>
+                )}
+              </span>
+              <span className="font-mono" style={{ color: 'var(--accent-purple)' }}>
+                {fmt(wallet.vlpStaking.fldEquivalent)} {tokenSymbol}
+              </span>
+            </div>
+          )}
           <div
             className="flex justify-between pt-1 border-t font-bold"
             style={{ borderColor: 'var(--border)' }}
@@ -235,6 +248,11 @@ function WalletRow({
           {wallet.stakedBalance > 0 && (
             <span className="text-[9px] font-mono" style={{ color: 'var(--accent-purple)' }}>
               +{fmt(wallet.stakedBalance)} staked
+            </span>
+          )}
+          {wallet.vlpStaking?.unstakingDetected && (
+            <span className="text-[9px] font-mono" style={{ color: 'var(--accent-red)' }}>
+              {'\u26A0'} unstaking
             </span>
           )}
         </div>
